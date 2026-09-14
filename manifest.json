@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Painel Ponto Icarus",
+  "version": "0.1.0",
+  "description": "Painel lateral para acompanhar e registrar seu ponto no Icarus, usando a sua sessão já autenticada no navegador (não guarda usuário/senha).",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Abrir Painel do Ponto Icarus"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "permissions": ["sidePanel", "storage", "tabs", "scripting", "notifications", "alarms"],
+  "host_permissions": [
+    "https://web.pontoicarus.com.br/*",
+    "https://backendicarus.pontoicarus.com.br/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.pontoicarus.com.br/*"],
+      "js": ["inject.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://web.pontoicarus.com.br/*"],
+      "js": ["content-bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

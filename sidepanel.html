@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ponto Icarus</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <strong>Ponto Icarus</strong>
+    </div>
+    <button id="refreshBtn" class="icon-btn" title="Atualizar">⟳</button>
+  </header>
+
+  <main id="app">
+    <section id="statusBox" class="status hidden"></section>
+
+    <section class="card" id="calendarCard">
+      <div class="calendar-header">
+        <button id="prevMonth" class="icon-btn">‹</button>
+        <div id="monthLabel">—</div>
+        <button id="nextMonth" class="icon-btn">›</button>
+      </div>
+      <div class="weekdays">
+        <span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span>
+      </div>
+      <div id="calendarGrid" class="calendar-grid"></div>
+      <div class="legend">
+        <span><i class="dot green"></i> Trabalhado</span>
+        <span><i class="dot red"></i> Erro/Falta</span>
+        <span><i class="dot purple"></i> Ajuste manual</span>
+        <span><i class="dot gray"></i> Ajuste pendente</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="day-panel-header">
+        <div class="card-title" id="dayPanelTitle">Batidas de hoje</div>
+        <button id="backToTodayBtn" class="link-btn hidden">← Voltar pra hoje</button>
+      </div>
+      <div class="tags" id="dayPanelTags"></div>
+
+      <div class="punches" id="punchesGrid">
+        <div class="punch" data-seq="1"><span class="label">1ª</span><span class="value">--:--</span></div>
+        <div class="punch" data-seq="2"><span class="label">2ª</span><span class="value">--:--</span></div>
+        <div class="punch" data-seq="3"><span class="label">3ª</span><span class="value">--:--</span></div>
+        <div class="punch" data-seq="4"><span class="label">4ª</span><span class="value">--:--</span></div>
+      </div>
+      <div id="missingPunchAlert" class="missing-alert hidden">
+        <span id="missingPunchText"></span>
+        <button id="missingPunchFillBtn" class="link-btn">Informar horário</button>
+      </div>
+      <div id="dayPanelMotivos" class="motivo-list hidden"></div>
+      <div id="pendingAdjustmentsToday" class="pending-list hidden"></div>
+
+      <div class="hours-summary">
+        <div><span class="hs-label" id="workedLabel">Trabalhado hoje</span><span id="workedToday" class="hs-value">--:--</span></div>
+        <div><span class="hs-label" id="remainingLabel">Falta trabalhar</span><span id="remainingToday" class="hs-value">--:--</span></div>
+      </div>
+
+      <div id="dayPanelNota"></div>
+      <div class="modal-actions">
+        <button id="dayPanelAddNota" class="secondary-btn">Adicionar nota</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <button id="baterPontoBtn" class="primary-btn" disabled>
+        ◎ Bater Ponto
+      </button>
+      <p class="hint" id="baterPontoHint">
+        Endpoint ainda não confirmado — vamos capturar juntos depois das 17h.
+      </p>
+    </section>
+
+    <section class="card actions-grid">
+      <button id="registrarPontoBtn" class="secondary-btn" disabled>Registrar Ponto</button>
+      <button id="justificarBtn" class="secondary-btn" disabled>Justificar Ponto</button>
+      <button id="notasBtn" class="secondary-btn">Notas</button>
+    </section>
+
+    <details class="card debug">
+      <summary>Depuração — endpoints observados</summary>
+      <div id="endpointLog" class="endpoint-log">Nenhum ainda.</div>
+    </details>
+  </main>
+
+  <div id="notaModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-title">Adicionar nota — <span id="notaModalDate"></span></div>
+      <textarea id="notaModalText" placeholder="Nota *"></textarea>
+      <div class="modal-actions">
+        <button id="notaModalCancel" class="secondary-btn">Cancelar</button>
+        <button id="notaModalSave" class="primary-btn">Cadastrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="punchTimeModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-title">Horário aproximado — <span id="punchTimeModalLabel"></span></div>
+      <p class="hint" style="margin-top:0">
+        Essa batida não foi registrada no Icarus. Informe a que horas ela aconteceu (aproximadamente) —
+        fica marcada em cinza no painel até você ajustar de verdade no Icarus.
+      </p>
+      <input type="time" id="punchTimeModalInput" class="time-input" />
+      <div class="modal-actions">
+        <button id="punchTimeModalCancel" class="secondary-btn">Cancelar</button>
+        <button id="punchTimeModalSave" class="primary-btn">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="api.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
