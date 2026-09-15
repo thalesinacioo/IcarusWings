@@ -40,13 +40,25 @@ function nextOccurrence(hh, mm) {
   return d.getTime();
 }
 
-function scheduleAllAlarms() {
-  PUNCH_SCHEDULE.forEach(({ seq, hh, mm }) => {
-    chrome.alarms.create(`punchReminder_${seq}`, {
+// BUG corrigido: isso recriava os 4 alarmes do zero toda vez que rodava —
+// e onInstalled dispara em TODO "recarregar" da extensão em chrome://extensions,
+// não só na instalação. chrome.alarms.create com um nome que já existe
+// SUBSTITUI o alarme, recalculando "próxima ocorrência a partir de agora".
+// Resultado prático: cada reload durante o dia empurrava pra amanhã
+// qualquer lembrete cujo horário já tivesse passado — inclusive os de
+// horários ainda não disparados, se o reload acontecesse um instante
+// depois do horário previsto. Por isso os lembretes pareciam nunca disparar.
+// Agora só cria o alarme se ele ainda não existir.
+async function scheduleAllAlarms() {
+  for (const { seq, hh, mm } of PUNCH_SCHEDULE) {
+    const name = `punchReminder_${seq}`;
+    const existing = await chrome.alarms.get(name);
+    if (existing) continue;
+    chrome.alarms.create(name, {
       when: nextOccurrence(hh, mm),
       periodInMinutes: 24 * 60,
     });
-  });
+  }
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -231,7 +243,15 @@ async function reconcilePendingAdjustments(registrosData) {
     const key = dateKeyOf(new Date(p.dataBatida));
     if (!pending[key]) continue;
     const punchCount = (p.pontosHorariosBatidasOrdenados || []).length;
-    const filtered = pending[key].filter((entry) => entry.seq > punchCount);
+    const horariosReais = new Set((p.pontosHorariosBatidasOrdenados || []).map((b) => b.horario));
+    // "delete" nunca reconcilia por contagem (a batida já existe, então
+    // punchCount>=seq seria sempre verdade e apagaria o lembrete na hora).
+    // Só some quando o horário exato dela some de vez do Icarus — sinal de
+    // que o gestor aprovou a exclusão de verdade — não quando a pessoa
+    // marca o checkbox (isso só risca o texto, ver setPendingDeletionDone).
+    const filtered = pending[key].filter((entry) =>
+      entry.type === "delete" ? horariosReais.has(entry.horarioMs) : entry.seq > punchCount
+    );
     if (filtered.length !== pending[key].length) {
       changed = true;
       if (filtered.length) pending[key] = filtered;

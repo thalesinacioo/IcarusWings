@@ -56,6 +56,16 @@ const minutesToHHMM = (min) => {
 };
 const hhmm = (ts) => new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
+// Soma dos intervalos ENTRE pares (saída -> próxima entrada), numa lista
+// ordenada de horários (ms) já mesclados (reais visíveis + pendentes com
+// horário). Nunca inclui o trecho em aberto no fim (isso é "trabalhado",
+// não intervalo) — só o que fica ENTRE dois pares completos.
+function intervalMinutesFromTimes(times) {
+  let min = 0;
+  for (let i = 1; i + 1 < times.length; i += 2) min += (times[i + 1] - times[i]) / 60000;
+  return min;
+}
+
 function showStatus(text, type = "info") {
   const box = $("#statusBox");
   box.textContent = text;
@@ -66,12 +76,37 @@ function hideStatus() {
   $("#statusBox").classList.add("hidden");
 }
 
+// Confirmação dentro do próprio painel — window.confirm() nativo aparece
+// como caixa de diálogo do navegador, cobrindo a janela inteira em vez de
+// ficar restrito à área do painel.
+let confirmResolve = null;
+function showConfirm(message, { title = "Confirmar", okLabel = "OK", cancelLabel = "Cancelar" } = {}) {
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    $("#confirmModalTitle").textContent = title;
+    $("#confirmModalText").textContent = message;
+    $("#confirmModalOk").textContent = okLabel;
+    $("#confirmModalCancel").textContent = cancelLabel;
+    $("#confirmModal").classList.remove("hidden");
+  });
+}
+function closeConfirm(result) {
+  $("#confirmModal").classList.add("hidden");
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  if (resolve) resolve(result);
+}
+
 function ingestRegistros(data) {
-  registrosPorDia = {};
+  // Funde por cima do que já tinha (não zera o cache inteiro): assim um mês
+  // já visto antes continua colorido na hora, mesmo navegando pra longe e
+  // voltando, ou reabrindo o painel — só o dia que veio na resposta atual
+  // é substituído.
   (data?.pontos || []).forEach((p) => {
     const d = new Date(p.dataBatida);
     registrosPorDia[dateKey(d)] = p;
   });
+  chrome.storage.local.set({ cachedRegistrosPorDia: registrosPorDia });
   renderCalendar();
   renderDayPanel();
   hideStatus();
@@ -113,7 +148,13 @@ async function fetchMonth() {
 // ---------- classificação dos dias ----------
 
 function batidasOrdenadas(ponto) {
-  return [...(ponto?.pontosHorariosBatidasOrdenados || [])].sort((a, b) => a.horario - b.horario);
+  const batidas = [...(ponto?.pontosHorariosBatidasOrdenados || [])];
+  // Ordena por horário em milissegundos
+  return batidas.sort((a, b) => {
+    const timeA = typeof a.horario === "number" ? a.horario : new Date(a.horario).getTime();
+    const timeB = typeof b.horario === "number" ? b.horario : new Date(b.horario).getTime();
+    return timeA - timeB;
+  });
 }
 
 function isBatidaManual(b) {
@@ -208,6 +249,16 @@ function renderDayPanel() {
   const ponto = registrosPorDia[key];
   const ordenadas = batidasOrdenadas(ponto);
   const diaPending = pendingAdjustments[key] || [];
+  // "delete" é lembrete sobre uma batida que JÁ existe — não entra no merge
+  // cronológico (que é só pra preencher slots vazios) nem no alerta de
+  // batida faltando (que é sobre slots que ainda não aconteceram).
+  const diaPendingMissing = diaPending.filter((p) => p.type !== "delete");
+  const diaPendingDelete = diaPending.filter((p) => p.type === "delete");
+  // batida marcada como "pendente de exclusão" some do cartão e da contagem
+  // — é assim que o dia vai ficar assim que a exclusão for aprovada de
+  // verdade, e é o que deixa a próxima batida real ocupar o slot certo
+  // (ex: a 2ª saída de verdade vira a 4ª batida, não a 5ª).
+  const ordenadasVisiveis = ordenadas.filter((b) => !diaPendingDelete.some((p) => p.horarioMs === b.horario));
 
   $("#dayPanelTitle").textContent = isToday
     ? "Batidas de hoje"
@@ -221,22 +272,25 @@ function renderDayPanel() {
   if (ponto?.temAbonoOuAjusteRegistrado) tags.push(`<span class="tag purple">Ajuste/abono${ponto.statusSolicitacao ? " · " + ponto.statusSolicitacao.toLowerCase() : ""}</span>`);
   if (ponto?.falta === "SIM") tags.push('<span class="tag red">Falta</span>');
   if (ponto?.consistente === "NAO") tags.push('<span class="tag red">Inconsistente</span>');
-  if (diaPending.length) tags.push(`<span class="tag gray">${diaPending.length} ajuste${diaPending.length > 1 ? "s" : ""} pendente${diaPending.length > 1 ? "s" : ""}</span>`);
+  if (diaPending.length) tags.push(`<span class="tag orange">${diaPending.length} ajuste${diaPending.length > 1 ? "s" : ""} pendente${diaPending.length > 1 ? "s" : ""}</span>`);
   $("#dayPanelTags").innerHTML = tags.join("");
 
-  // 4 batidas (compacto) — reais e pendentes juntas, em ordem cronológica real
-  const merged = mergedPunchesForDay(key, ordenadas, diaPending);
+  // 4 batidas (compacto) — reais (já sem as marcadas p/ exclusão) e
+  // pendentes juntas, em ordem cronológica real
+  const merged = mergedPunchesForDay(key, ordenadasVisiveis, diaPendingMissing);
   document.querySelectorAll(".punch").forEach((el) => {
     const seq = Number(el.dataset.seq);
     const item = merged[seq - 1];
     const valueEl = el.querySelector(".value");
-    el.classList.remove("manual", "pending", "fillable");
+    el.classList.remove("manual", "pending", "fillable", "deletable", "predicted");
     el.onclick = null;
     if (item?.real) {
       const b = item.real;
       valueEl.textContent = b.horarioFormatadoSemData || "--:--";
       el.classList.toggle("manual", isBatidaManual(b));
-      el.title = `${b.marcacaoFmt || ""}${isBatidaManual(b) ? ` · ${b.tipoRegistroFmt}` : ""}`;
+      el.classList.add("deletable");
+      el.title = `${b.marcacaoFmt || ""}${isBatidaManual(b) ? ` · ${b.tipoRegistroFmt}` : ""} · Clique pra marcar como pendente de exclusão.`;
+      el.onclick = () => markPunchPendingDeletion(key, seq, b);
     } else if (item?.pending) {
       const pend = item.pending;
       const label = pend.label || PUNCH_SCHEDULE.find((s) => s.seq === pend.seq)?.label || `${seq}ª batida`;
@@ -256,7 +310,7 @@ function renderDayPanel() {
     }
   });
 
-  renderMissingPunchAlert(key, ordenadas, diaPending, isToday);
+  renderMissingPunchAlert(key, ordenadasVisiveis, diaPendingMissing, isToday);
 
   // motivos das batidas ajustadas manualmente (detalhe extra)
   const motivos = ordenadas.filter((b) => isBatidaManual(b) && b.motivo);
@@ -271,17 +325,40 @@ function renderDayPanel() {
     motivoBox.innerHTML = "";
   }
 
-  // ajustes pendentes (lembrete "ajustar depois" ou horário digitado)
+  // ajustes pendentes (lembrete "ajustar depois", horário digitado, ou
+  // exclusão pendente de uma batida real)
   const pendingBox = $("#pendingAdjustmentsToday");
   if (diaPending.length) {
     pendingBox.classList.remove("hidden");
     pendingBox.innerHTML = diaPending
-      .map((p) =>
-        p.approxTime
-          ? `<div class="pending-item"><span class="dot gray"></span>${p.label} — horário aproximado informado: ${p.approxTime}, falta registrar no Icarus.</div>`
-          : `<div class="pending-item"><span class="dot gray"></span>${p.label} — clicado em "ajustar depois" às ${hhmm(p.clickedAt)}, falta registrar no Icarus.</div>`
-      )
+      .map((p) => {
+        if (p.type === "delete") {
+          return `<div class="pending-item pending-item-delete">
+            <label class="pending-check-label">
+              <input type="checkbox" class="pending-check" data-horario="${p.horarioMs}" ${p.done ? "checked" : ""} />
+              <span class="pending-text${p.done ? " struck" : ""}">Exclusão pendente: ${p.label} (${p.horario})</span>
+            </label>
+            <button type="button" class="pending-cancel" data-horario="${p.horarioMs}" title="Cancelar exclusão pendente">✕</button>
+          </div>`;
+        }
+        return p.approxTime
+          ? `<div class="pending-item"><span class="dot orange"></span>${p.label} — horário aproximado informado: ${p.approxTime}, falta registrar no Icarus.</div>`
+          : `<div class="pending-item"><span class="dot orange"></span>${p.label} — clicado em "ajustar depois" às ${hhmm(p.clickedAt)}, falta registrar no Icarus.</div>`;
+      })
       .join("");
+    pendingBox.querySelectorAll(".pending-check").forEach((cb) => {
+      cb.addEventListener("change", () => IcarusAPI.setPendingDeletionDone(key, Number(cb.dataset.horario), cb.checked));
+    });
+    pendingBox.querySelectorAll(".pending-cancel").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const ok = await showConfirm("A batida volta a aparecer no cartão de batidas.", {
+          title: "Cancelar exclusão pendente",
+          okLabel: "Cancelar exclusão",
+          cancelLabel: "Voltar",
+        });
+        if (ok) IcarusAPI.resolvePendingDeletion(key, Number(btn.dataset.horario));
+      });
+    });
   } else {
     pendingBox.classList.add("hidden");
     pendingBox.innerHTML = "";
@@ -299,6 +376,13 @@ function renderDayPanel() {
     $("#workedToday").textContent = ponto?.tempoNormal || "--:--";
     $("#remainingToday").textContent = ponto?.tempoFaltando || "--:--";
     $("#workedToday").parentElement.classList.remove("running");
+    if (ponto) {
+      const diaPendingComHorarioSel = diaPendingMissing.filter((p) => p.approxTime);
+      const mergedTimesSel = mergedPunchesForDay(key, ordenadasVisiveis, diaPendingComHorarioSel).map((item) => item.timeMs);
+      $("#intervalToday").textContent = minutesToHHMM(intervalMinutesFromTimes(mergedTimesSel));
+    } else {
+      $("#intervalToday").textContent = "--:--";
+    }
   }
 }
 
@@ -329,20 +413,114 @@ function renderMissingPunchAlert(key, ordenadas, diaPending, isToday) {
   $("#missingPunchFillBtn").onclick = () => openPunchTimeModal(key, next.seq, next.label, null);
 }
 
+// ---------- exclusão pendente (lembrete local, não mexe no Icarus) ----------
+
+async function markPunchPendingDeletion(key, seq, batida) {
+  const label = batida.marcacaoFmt || PUNCH_SCHEDULE.find((s) => s.seq === seq)?.label || `${seq}ª batida`;
+  const horario = batida.horarioFormatadoSemData || "";
+  const ok = await showConfirm(
+    `Marcar a batida das ${horario} (${label}) como pendente de exclusão?\n\n` +
+    "Ela some do cartão de batidas (como se já tivesse sido excluída de verdade) e passa a aparecer só na lista " +
+    "de ajustes pendentes. Isso não mexe no Icarus — solicite a exclusão de verdade no site; dá pra cancelar o " +
+    "lembrete por lá se você errar a mão.",
+    { title: "Pendente de exclusão", okLabel: "Marcar" }
+  );
+  if (!ok) return;
+  await IcarusAPI.markPendingDeletion(key, batida.horario, label, horario);
+}
+
 // ---------- horário aproximado de uma batida faltante ----------
 
 let punchTimeModalCtx = null; // { dateKey, seq, label }
+
+// Converte "HH:MM" string para minutos desde meia-noite
+function timeStrToMinutes(timeStr) {
+  if (!timeStr || timeStr.length !== 5) return null;
+  const [hh, mm] = timeStr.split(":").map(Number);
+  return hh * 60 + mm;
+}
+
+/**
+ * Recalcula trabalhado/falta pro dia `key` como ficaria SE a batida `seq`
+ * valesse `inputTimeStr` — usa a mesma lógica de "merge cronológico" de
+ * mergedPunchesForDay (não importa a ordem em que foi digitada), somando os
+ * pares entrada/saída reais + pendentes (exceto a que está sendo editada,
+ * que entra com o valor do campo em vez do valor salvo).
+ */
+function computeTotalsForDayPreview(key, seq, inputTimeStr) {
+  const inputMinutes = timeStrToMinutes(inputTimeStr);
+  const ponto = registrosPorDia[key];
+  const ordenadas = ponto ? batidasOrdenadas(ponto) : [];
+  const diaPendingList = pendingAdjustments[key] || [];
+  const diaPendingDelete = diaPendingList.filter((p) => p.type === "delete");
+  const ordenadasVisiveis = ordenadas.filter((b) => !diaPendingDelete.some((p) => p.horarioMs === b.horario));
+  const outrasPendentesComHorario = diaPendingList.filter((p) => p.type !== "delete" && p.approxTime && p.seq !== seq);
+
+  const merged = mergedPunchesForDay(key, ordenadasVisiveis, outrasPendentesComHorario).map((item) => item.timeMs);
+
+  if (inputMinutes !== null) {
+    const dayDate = keyToDate(key);
+    const hypTime = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0, 0).getTime() + inputMinutes * 60000;
+    merged.push(hypTime);
+  }
+  merged.sort((a, b) => a - b);
+
+  let workedMin = 0;
+  for (let i = 0; i + 1 < merged.length; i += 2) {
+    workedMin += (merged[i + 1] - merged[i]) / 60000;
+  }
+  const isToday = key === dateKey(new Date());
+  if (merged.length % 2 === 1 && isToday) {
+    workedMin += (Date.now() - merged[merged.length - 1]) / 60000;
+  }
+
+  const trabalhadoApiBase = ponto
+    ? (ponto.minutoNormalDiurno || 0) +
+      (ponto.minutoNormalNoturno || 0) +
+      (ponto.minutoExtraTP1 || 0) +
+      (ponto.minutoExtraTP2 || 0) +
+      (ponto.minutoExtraTP3 || 0)
+    : 0;
+  const metaMin = ponto ? trabalhadoApiBase + (ponto.minutoFaltante || 0) : DEFAULT_JORNADA_MIN;
+
+  return { worked: workedMin, remaining: Math.max(0, metaMin - workedMin) };
+}
+
+function updatePunchTimePreview() {
+  if (!punchTimeModalCtx) return;
+
+  const inputValue = $("#punchTimeModalInput").value;
+  if (!inputValue) {
+    $("#punchTimePreview").classList.add("hidden");
+    return;
+  }
+
+  const { dateKey: key, seq } = punchTimeModalCtx;
+  const totals = computeTotalsForDayPreview(key, seq, inputValue);
+  $("#previewWorked").textContent = minutesToHHMM(totals.worked);
+  $("#previewRemaining").textContent = minutesToHHMM(totals.remaining);
+  $("#punchTimePreview").classList.remove("hidden");
+}
 
 function openPunchTimeModal(dateKeyStr, seq, label, existingApproxTime) {
   punchTimeModalCtx = { dateKey: dateKeyStr, seq, label };
   $("#punchTimeModalLabel").textContent = label;
   $("#punchTimeModalInput").value = existingApproxTime || hhmm(Date.now());
   $("#punchTimeModal").classList.remove("hidden");
+  updatePunchTimePreview();
 }
+
 function closePunchTimeModal() {
   $("#punchTimeModal").classList.add("hidden");
   punchTimeModalCtx = null;
+  $("#punchTimePreview").classList.add("hidden");
 }
+
+function clearPunchTimeInput() {
+  $("#punchTimeModalInput").value = "";
+  $("#punchTimePreview").classList.add("hidden");
+}
+
 async function savePunchTimeModal() {
   if (!punchTimeModalCtx) return;
   const value = $("#punchTimeModalInput").value; // "HH:MM"
@@ -364,19 +542,29 @@ function tickLive() {
   const key = dateKey(new Date());
   const ponto = registrosPorDia[key];
   const workedEl = $("#workedToday");
+  const intervalEl = $("#intervalToday");
   const remainingEl = $("#remainingToday");
+  const punch4 = document.querySelector('.punch[data-seq="4"]');
 
   const ordenadas = ponto ? batidasOrdenadas(ponto) : [];
+  const diaPendingList = pendingAdjustments[key] || [];
+  // batida marcada como "pendente de exclusão" não pode entrar na conta —
+  // ela ainda está nos dados do Icarus (é por isso que dá pra marcar pra
+  // excluir), mas some do cartão e deve sumir do cálculo também.
+  const diaPendingDelete = diaPendingList.filter((p) => p.type === "delete");
+  const ordenadasVisiveis = ordenadas.filter((b) => !diaPendingDelete.some((p) => p.horarioMs === b.horario));
   // batida(s) digitada(s) mas ainda não enviada(s) ao Icarus — o Icarus só
   // viu as reais, então não dá pra confiar no total dele; recalculamos
   // somando os intervalos entrada/saída da sequência completa (real + pendente).
-  const diaPendingComHorario = (pendingAdjustments[key] || []).filter((p) => p.approxTime);
+  const diaPendingComHorario = diaPendingList.filter((p) => p.type !== "delete" && p.approxTime);
 
   if (!ponto && !diaPendingComHorario.length) {
     // nada aconteceu hoje ainda: nem batida real registrada no Icarus, nem digitada
     workedEl.textContent = "--:--";
+    intervalEl.textContent = "--:--";
     remainingEl.textContent = "--:--";
     workedEl.parentElement.classList.remove("running");
+    if (punch4) punch4.classList.remove("predicted");
     return;
   }
 
@@ -392,71 +580,72 @@ function tickLive() {
   // trabalhar" vazio.
   const metaMin = ponto ? trabalhadoApiBase + (ponto.minutoFaltante || 0) : DEFAULT_JORNADA_MIN;
 
+  // sequência cronológica só dos instantes (reais visíveis + pendentes com
+  // horário) — usada pro intervalo sempre (o Icarus não expõe esse número)
+  // e pro trabalhado quando não dá pra confiar no total pronto do Icarus.
+  const mergedTimes = mergedPunchesForDay(key, ordenadasVisiveis, diaPendingComHorario).map((item) => item.timeMs);
+
   let workedMin;
   let emAndamento;
-  if (diaPendingComHorario.length) {
-    const merged = mergedPunchesForDay(key, ordenadas, diaPendingComHorario);
+  if (diaPendingComHorario.length || diaPendingDelete.length) {
+    // total pronto do Icarus não serve aqui: ou falta uma batida que só
+    // existe localmente, ou sobra uma que precisa sair da conta.
     workedMin = 0;
-    for (let i = 0; i + 1 < merged.length; i += 2) {
-      workedMin += (merged[i + 1].timeMs - merged[i].timeMs) / 60000;
+    for (let i = 0; i + 1 < mergedTimes.length; i += 2) {
+      workedMin += (mergedTimes[i + 1] - mergedTimes[i]) / 60000;
     }
-    emAndamento = merged.length % 2 === 1;
-    if (emAndamento) workedMin += (Date.now() - merged[merged.length - 1].timeMs) / 60000;
+    emAndamento = mergedTimes.length % 2 === 1;
+    if (emAndamento) workedMin += (Date.now() - mergedTimes[mergedTimes.length - 1]) / 60000;
   } else {
     emAndamento = ordenadas.length % 2 === 1;
     const decorridoAberto = emAndamento ? (Date.now() - ordenadas[ordenadas.length - 1].horario) / 60000 : 0;
     workedMin = trabalhadoApiBase + decorridoAberto;
   }
 
+  const remainingMin = Math.max(0, metaMin - workedMin);
   workedEl.textContent = minutesToHHMM(workedMin);
-  remainingEl.textContent = minutesToHHMM(Math.max(0, metaMin - workedMin));
+  intervalEl.textContent = minutesToHHMM(intervalMinutesFromTimes(mergedTimes));
+  remainingEl.textContent = minutesToHHMM(remainingMin);
   workedEl.parentElement.classList.toggle("running", emAndamento);
+
+  // previsão de saída (4ª batida) — só enquanto o 4º slot ainda está vazio
+  // e as 3 primeiras já aconteceram (real ou digitada); é uma estimativa
+  // ("se eu continuar trabalhando sem mais pausa, termino às..."), nunca
+  // uma batida — some assim que a batida real (ou uma pendente) ocupar o slot.
+  if (punch4 && mergedTimes.length === 3 && punch4.classList.contains("fillable")) {
+    punch4.classList.add("predicted");
+    punch4.querySelector(".value").textContent = `~${hhmm(Date.now() + remainingMin * 60000)}`;
+    punch4.title = "Previsão de saída (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.";
+  } else if (punch4) {
+    punch4.classList.remove("predicted");
+  }
 }
 
-// ---------- notas ----------
+// ---------- registrar ponto ----------
 
-let notaModalDate = null;
-
-function openNotaModal(date) {
-  notaModalDate = date;
-  $("#notaModalDate").textContent = date.toLocaleDateString("pt-BR");
-  $("#notaModalText").value = "";
-  $("#notaModal").classList.remove("hidden");
-}
-function closeNotaModal() {
-  $("#notaModal").classList.add("hidden");
-}
-
-async function submitNota() {
-  const texto = $("#notaModalText").value.trim();
-  if (!texto || !notaModalDate) return;
+async function baterPonto() {
+  const ok = await showConfirm("Registrar ponto agora, no horário atual, na aba do Icarus?", {
+    title: "Registrar Ponto",
+    okLabel: "Registrar",
+  });
+  if (!ok) return;
+  const btn = $("#baterPontoBtn");
+  btn.disabled = true;
+  showStatus("Registrando ponto na aba do Icarus…", "info");
   try {
-    await IcarusAPI.addNota(notaModalDate, texto);
-    closeNotaModal();
-    showStatus("Nota adicionada.", "info");
-    setTimeout(fetchMonth, 1000);
+    await IcarusAPI.baterPonto();
+    showStatus("Ponto registrado! Atualizando…", "info");
+    setTimeout(fetchMonth, 1200);
   } catch (err) {
-    showStatus(`Erro ao salvar nota: ${err.message}`, "error");
+    showStatus(`Erro ao registrar ponto: ${err.message}`, "error");
+  } finally {
+    btn.disabled = false;
   }
-}
-
-// ---------- depuração ----------
-
-async function renderEndpointLog() {
-  const log = await IcarusAPI.getEndpointLog();
-  const el = $("#endpointLog");
-  if (!log.length) {
-    el.textContent = "Nenhum ainda.";
-    return;
-  }
-  el.innerHTML = log
-    .map((e) => `<div>${new Date(e.ts).toLocaleTimeString("pt-BR")} · ${e.method} ${e.status ?? ""} ${(e.url || "").replace("https://backendicarus.pontoicarus.com.br", "")}</div>`)
-    .join("");
 }
 
 // ---------- wiring ----------
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   $("#prevMonth").addEventListener("click", () => {
     currentMonth--;
     if (currentMonth < 0) { currentMonth = 11; currentYear--; }
@@ -467,7 +656,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (currentMonth > 11) { currentMonth = 0; currentYear++; }
     loadMonth();
   });
-  $("#refreshBtn").addEventListener("click", () => { fetchMonth(); renderEndpointLog(); });
+  $("#refreshBtn").addEventListener("click", () => { fetchMonth(); });
 
   $("#backToTodayBtn").addEventListener("click", () => {
     selectedDayKey = null;
@@ -475,34 +664,32 @@ document.addEventListener("DOMContentLoaded", () => {
     renderDayPanel();
   });
 
-  $("#notasBtn").addEventListener("click", () => openNotaModal(new Date()));
-  $("#notaModalCancel").addEventListener("click", closeNotaModal);
-  $("#notaModalSave").addEventListener("click", submitNota);
-
-  $("#dayPanelAddNota").addEventListener("click", () => {
-    const key = selectedDayKey || dateKey(new Date());
-    openNotaModal(keyToDate(key));
-  });
-
   $("#punchTimeModalCancel").addEventListener("click", closePunchTimeModal);
   $("#punchTimeModalSave").addEventListener("click", savePunchTimeModal);
+  $("#punchTimeModalInput").addEventListener("input", updatePunchTimePreview);
+  $("#punchTimeModalClear").addEventListener("click", clearPunchTimeInput);
 
-  $("#baterPontoBtn").disabled = true; // combinamos deixar pra depois das 17h
-  $("#registrarPontoBtn").disabled = true; // fluxo de aprovação — ainda não automatizado
-  $("#justificarBtn").disabled = true; // idem
+  $("#baterPontoBtn").addEventListener("click", baterPonto);
+
+  $("#confirmModalCancel").addEventListener("click", () => closeConfirm(false));
+  $("#confirmModalOk").addEventListener("click", () => closeConfirm(true));
 
   document.addEventListener("icarus:observed", (ev) => {
     const { url, data } = ev.detail || {};
     if (url && url.includes("/ponto/consultarRegistrosPonto") && data) ingestRegistros(data);
-    renderEndpointLog();
   });
   document.addEventListener("icarus:pendingAdjustmentsChanged", loadPendingAdjustments);
 
-  // 1) desenha o calendário e o restante da UI na hora, sem esperar rede
+  // 1) recupera o que já tinha sido visto na última vez que o painel foi
+  // aberto — sem isso, cada reabertura começa com registrosPorDia vazio e
+  // o painel pisca "--:--"/sem cor até a busca real responder.
+  const { cachedRegistrosPorDia } = await chrome.storage.local.get("cachedRegistrosPorDia");
+  if (cachedRegistrosPorDia) registrosPorDia = cachedRegistrosPorDia;
+
+  // 2) desenha o calendário e o restante da UI na hora, sem esperar rede
   renderCalendar();
   renderDayPanel();
   loadPendingAdjustments();
-  renderEndpointLog();
-  // 2) só então dispara a busca real (assíncrona) que colore os dias
+  // 3) só então dispara a busca real (assíncrona) que atualiza os dias
   fetchMonth();
 });

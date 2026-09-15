@@ -11,6 +11,7 @@
   --red: #d64545;
   --purple: #8b5cf6;
   --gray: #cfd6d3;
+  --orange: #f97316;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -121,7 +122,7 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--orange);
   border: 1.5px solid var(--card);
 }
 
@@ -134,9 +135,9 @@ body {
   flex-wrap: wrap;
 }
 .legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 4px; }
-.legend .dot.green { background: var(--green); }
 .legend .dot.red { background: var(--red); }
 .legend .dot.purple { background: var(--purple); }
+.legend .dot.orange { background: var(--orange); }
 .legend .dot.gray { background: var(--muted); }
 
 .punches {
@@ -146,6 +147,7 @@ body {
   margin-bottom: 10px;
 }
 .punch {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 9px;
   padding: 8px 4px;
@@ -156,7 +158,7 @@ body {
 
 .hours-summary {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 .hours-summary > div {
@@ -201,9 +203,6 @@ body {
 .secondary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .secondary-btn:not(:disabled):hover { background: var(--border); }
 
-.debug summary { cursor: pointer; font-size: 12px; color: var(--muted); }
-.endpoint-log { margin-top: 8px; font-family: monospace; font-size: 10.5px; max-height: 140px; overflow: auto; color: var(--muted); }
-.endpoint-log div { padding: 2px 0; border-bottom: 1px dashed var(--border); }
 
 /* dias clicáveis do calendário */
 .calendar-grid .day.clickable { cursor: pointer; }
@@ -212,15 +211,20 @@ body {
 /* batida ajustada manualmente ou pendente, no resumo de hoje */
 .punch.manual { border-color: var(--purple); }
 .punch.manual .value::after { content: "*"; color: var(--purple); font-weight: 700; }
-.punch.pending { border-color: var(--muted); border-style: dashed; }
-.punch.pending .value { color: var(--muted); font-weight: 600; }
+.punch.pending { border-color: var(--orange); border-style: dashed; }
+.punch.pending .value { color: var(--orange); font-weight: 600; }
+
+/* batida real clicável pra marcar como "pendente de exclusão" — some do
+   cartão assim que marcada (ver #pendingAdjustmentsToday) */
+.punch.deletable { cursor: pointer; }
+.punch.deletable:hover { border-color: var(--red); }
 
 .pending-list { margin-bottom: 10px; display: flex; flex-direction: column; gap: 6px; }
 .pending-item {
   font-size: 11px;
-  color: var(--muted);
-  background: var(--bg);
-  border: 1px dashed var(--border);
+  color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 8%, transparent);
+  border: 1px dashed var(--orange);
   border-radius: 8px;
   padding: 6px 8px;
   display: flex;
@@ -228,6 +232,13 @@ body {
   gap: 6px;
 }
 .pending-item .dot { margin-top: 3px; flex-shrink: 0; }
+
+.pending-item-delete { align-items: center; }
+.pending-check-label { display: flex; align-items: flex-start; gap: 6px; flex: 1; cursor: pointer; }
+.pending-item input[type="checkbox"] { accent-color: var(--orange); width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; }
+.pending-text.struck { text-decoration: line-through; opacity: 0.6; }
+.pending-cancel { background: none; border: none; color: var(--orange); font-size: 12px; cursor: pointer; padding: 0 0 0 6px; flex-shrink: 0; }
+.pending-cancel:hover { color: var(--red); }
 
 .hours-summary > div.running { outline: 1px solid var(--brand); }
 
@@ -249,6 +260,7 @@ body {
 .tag.purple { background: var(--purple); }
 .tag.red { background: var(--red); }
 .tag.gray { background: var(--muted); }
+.tag.orange { background: var(--orange); }
 
 .motivo-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 .motivo-item {
@@ -278,6 +290,9 @@ body {
 }
 .punch.fillable { cursor: pointer; border-style: dashed; }
 .punch.fillable:hover { border-color: var(--muted); background: var(--bg); }
+
+/* previsão de horário de saída (4ª batida) — estimativa, não uma batida real */
+.punch.predicted .value { color: var(--muted); font-weight: 600; }
 
 .time-input {
   width: 100%;
@@ -319,7 +334,8 @@ body {
   overflow-y: auto;
 }
 .modal-title { font-weight: 600; margin-bottom: 8px; }
-#notaModalText {
+.modal-text { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text); white-space: pre-line; }
+.modal-textarea {
   width: 100%;
   min-height: 90px;
   border-radius: 8px;
@@ -329,6 +345,10 @@ body {
   padding: 8px;
   resize: vertical;
   font-family: inherit;
+  margin-top: 8px;
 }
 .modal-actions { display: flex; gap: 8px; margin-top: 10px; }
 .modal-actions .secondary-btn, .modal-actions .primary-btn { flex: 1; }
+
+.preview-box { background: var(--bg); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text); }
+.preview-box strong { font-weight: 600; }

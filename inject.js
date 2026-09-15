@@ -89,11 +89,17 @@ async function waitFor(predicate, { timeout = 4000, interval = 100 } = {}) {
   return null;
 }
 
+// Muitos botões de ação (linha da tabela: "Notas", "Justificar Ponto",
+// "Reprocessar Ponto"...) são só ícone — sem NENHUM texto visível, o nome
+// "Justificar Ponto" etc. só existe no atributo `title` (tooltip). Por isso
+// aqui, se o textContent não bater, cai pro título/aria-label também.
 function findButtonByText(text, { exact = true, root = document } = {}) {
   const buttons = Array.from(root.querySelectorAll("button"));
+  const matches = (t) => (exact ? t === text : t.includes(text));
   return buttons.find((b) => {
-    const t = (b.textContent || "").trim();
-    return exact ? t === text : t.includes(text);
+    if (matches((b.textContent || "").trim())) return true;
+    const tooltip = b.getAttribute("title") || b.getAttribute("aria-label") || b.getAttribute("data-pr-tooltip") || "";
+    return matches(tooltip.trim());
   });
 }
 
@@ -135,6 +141,157 @@ async function uiSearch({ dataInicioDDMMYYYY, dataFimDDMMYYYY }) {
   return { ok: true };
 }
 
+// Confirmado inspecionando a página real (15/09/2026): NÃO existe um botão
+// com texto "Bater Ponto". O botão real é um ícone (sem texto visível) no
+// topo direito, cujo tooltip/atributo é "Registrar Ponto" — o mesmo texto
+// do botão "Registrar Ponto" da tela de pesquisa (que é uma ação diferente:
+// abre um formulário de ajuste/solicitação). O que diferencia os dois é que
+// o botão real de bater ponto NÃO tem texto visível (só o ícone).
+function findBaterPontoButton() {
+  const candidates = Array.from(document.querySelectorAll("button"));
+  const semTextoComTooltip = candidates.filter((b) => {
+    if ((b.textContent || "").trim()) return false; // tem texto visível -> é o outro botão
+    const tooltip = b.getAttribute("title") || b.getAttribute("aria-label") || b.getAttribute("data-pr-tooltip") || "";
+    return /registrar ponto/i.test(tooltip);
+  });
+  if (semTextoComTooltip.length) return semTextoComTooltip[0];
+
+  // Fallback: qualquer botão pequeno, só ícone, perto do topo da página.
+  return candidates.find((b) => {
+    if ((b.textContent || "").trim()) return false;
+    const rect = b.getBoundingClientRect();
+    return rect.top >= 0 && rect.top < 80 && rect.width > 0 && rect.width < 60;
+  }) || null;
+}
+
+// Clica no botão real de bater ponto e confirma no modal que o Icarus abre
+// ("Deseja realmente efetuar a batida de ponto?" / botão "Sim"), esperando
+// depois a mensagem de sucesso ("Ponto registrado com sucesso!") aparecer.
+async function uiBaterPonto() {
+  const btn = await waitFor(() => findBaterPontoButton(), { timeout: 3000 });
+  if (!btn) throw new Error('Botão de bater ponto (ícone "Registrar Ponto" no topo) não encontrado na página.');
+  if (btn.disabled) throw new Error("Botão de bater ponto está desabilitado na página agora.");
+  btn.click();
+
+  const confirmBtn = await waitFor(
+    () => {
+      const dialog = Array.from(document.querySelectorAll('[class*="modal"], [role="dialog"], [class*="dialog"]')).find((d) =>
+        /efetuar a batida de ponto/i.test(d.textContent || "")
+      );
+      if (!dialog) return null;
+      return findButtonByText("Sim", { root: dialog, exact: false });
+    },
+    { timeout: 3000, interval: 150 }
+  );
+  if (!confirmBtn) {
+    throw new Error('Cliquei no botão mas não apareceu o modal esperado ("Deseja realmente efetuar a batida de ponto?"). Confira manualmente.');
+  }
+  confirmBtn.click();
+
+  const sucesso = await waitFor(() => /ponto registrado com sucesso/i.test(document.body.textContent || ""), {
+    timeout: 4000,
+    interval: 200,
+  });
+  if (!sucesso) {
+    throw new Error("Confirmei a batida mas não vi a mensagem de sucesso — confira manualmente na aba do Icarus.");
+  }
+
+  return { ok: true };
+}
+
+// Acha a linha do registro "DD/MM/YYYY HH:MM" dentro do modal de "Ajuste de
+// Ponto" e sobe até o container que também tem os botões de ação da linha
+// (o texto do horário é um nó-folha; os botões "Remover"/"Adicionar" ficam
+// num ancestral próximo — a estrutura exata do PrimeReact não é estável o
+// bastante pra confiar num seletor fixo).
+function findAjusteRegistroRow(dataDDMMYYYY, horarioHHMM) {
+  const wanted = `${dataDDMMYYYY} ${horarioHHMM}`;
+  // O horário fica numa <td class="p-editable-column"> (PrimeReact) que tem
+  // 1 filho — não é um nó-folha puro, então NÃO exigimos children.length===0
+  // (isso já foi um bug: nunca achava a linha por causa disso).
+  const candidates = Array.from(document.querySelectorAll("*")).filter((el) => (el.textContent || "").trim() === wanted);
+  for (const el of candidates) {
+    let node = el;
+    for (let i = 0; i < 6 && node; i++) {
+      const removerBtn =
+        findButtonByText("Remover", { root: node, exact: false }) || findButtonByText("Excluir", { root: node, exact: false });
+      const adicionarBtn = findButtonByText("Adicionar", { root: node, exact: true });
+      if (removerBtn && adicionarBtn) return { row: node, removerBtn, adicionarBtn };
+      node = node.parentElement;
+    }
+  }
+  return null;
+}
+
+// Abre "Justificar Ponto" na linha do dia -> escolhe "Ajuste de Ponto" no
+// modal "O Que Deseja Solicitar?" -> espera a lista de registros do dia
+// carregar. Comum às ações de remover/editar uma batida real.
+async function abrirModalAjustePonto(dataDDMMYYYY) {
+  const row = await waitFor(() => findRowByDate(dataDDMMYYYY));
+  if (!row) throw new Error(`Não encontrei a linha do dia ${dataDDMMYYYY} na tabela. Rode uma pesquisa que inclua esse dia primeiro.`);
+  const justificarBtn = findButtonByText("Justificar Ponto", { root: row, exact: false });
+  if (!justificarBtn) throw new Error('Botão "Justificar Ponto" não encontrado nessa linha.');
+  justificarBtn.click();
+
+  const ajusteBtn = await waitFor(() => findButtonByText("Ajuste de Ponto", { exact: true }), { timeout: 3000 });
+  if (!ajusteBtn) throw new Error('Não abriu o modal "O Que Deseja Solicitar?" (ou o botão "Ajuste de Ponto" não apareceu).');
+  ajusteBtn.click();
+
+  const carregou = await waitFor(() => findButtonByText("Adicionar Horário", { exact: false }), { timeout: 3000 });
+  if (!carregou) throw new Error('O modal de "Ajuste de Ponto" (lista de registros do dia) não abriu.');
+}
+
+// Remove de verdade uma batida existente: acha a linha certa (pelo horário
+// já registrado), clica "Remover", escreve a justificativa (obrigatória) e
+// clica "Cadastrar". Isso fica pendente de aprovação do gestor, como
+// qualquer ajuste de ponto no Icarus.
+async function uiRemoverBatida({ dataDDMMYYYY, horarioHHMM, justificativa }) {
+  if (!justificativa || !justificativa.trim()) throw new Error("Justificativa é obrigatória pra remover uma batida.");
+
+  await abrirModalAjustePonto(dataDDMMYYYY);
+
+  const found = await waitFor(() => findAjusteRegistroRow(dataDDMMYYYY, horarioHHMM), { timeout: 3000 });
+  if (!found) throw new Error(`Não encontrei o registro de ${horarioHHMM} do dia ${dataDDMMYYYY} no modal de ajuste.`);
+  found.removerBtn.click();
+  await sleep(200);
+
+  // O campo de Justificativa é um MUI multiline com DOIS <textarea> no DOM:
+  // o real (name="justificativa") e um aria-hidden/readonly só pra medir
+  // altura (auto-resize) — pegar "o último da página" pega o errado.
+  const textarea =
+    document.querySelector('textarea[name="justificativa"]') ||
+    Array.from(document.querySelectorAll("textarea")).find((t) => !t.readOnly && t.getAttribute("aria-hidden") !== "true");
+  if (!textarea) throw new Error('Campo de "Justificativa" não encontrado no modal.');
+  setNativeTextareaValue(textarea, justificativa);
+  await sleep(150);
+
+  const cadastrarBtn = findButtonByText("Cadastrar", { exact: false });
+  if (!cadastrarBtn) throw new Error('Botão "Cadastrar" não encontrado no modal.');
+  cadastrarBtn.click();
+
+  // O Icarus valida no clique e mostra um toast de erro se a quantidade de
+  // registros do dia ficar ímpar (não dá pra remover só 1 batida de um dia
+  // com número par — precisa remover/adicionar em pares).
+  const resultado = await waitFor(
+    () => {
+      const texto = document.body.textContent || "";
+      if (/precisa ser par/i.test(texto)) return { erro: "par" };
+      if (/sucesso/i.test(texto)) return { ok: true };
+      if (!findButtonByText("Adicionar Horário", { exact: false })) return { ok: true };
+      return null;
+    },
+    { timeout: 5000, interval: 200 }
+  );
+  if (!resultado) throw new Error("Enviei o ajuste mas não consegui confirmar — confira em Minhas Solicitações.");
+  if (resultado.erro === "par") {
+    throw new Error(
+      "O Icarus não deixa remover só essa batida: a quantidade de registros do dia precisa ficar par. Remova em pares, ou edite o horário em vez de excluir."
+    );
+  }
+
+  return { ok: true };
+}
+
 async function uiAddNota({ dataDDMMYYYY, texto }) {
   const row = await waitFor(() => findRowByDate(dataDDMMYYYY));
   if (!row) throw new Error(`Não encontrei a linha do dia ${dataDDMMYYYY} na tabela. Rode uma pesquisa que inclua esse dia primeiro.`);
@@ -164,6 +321,8 @@ window.addEventListener("message", async (event) => {
     let result;
     if (action === "search") result = await uiSearch(params);
     else if (action === "addNota") result = await uiAddNota(params);
+    else if (action === "baterPonto") result = await uiBaterPonto();
+    else if (action === "removerBatida") result = await uiRemoverBatida(params);
     else throw new Error(`Ação desconhecida: ${action}`);
 
     window.postMessage(

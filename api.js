@@ -21,7 +21,12 @@ chrome.runtime.onMessage.addListener((msg) => {
     const p = __pending.get(msg.payload.requestId);
     if (p) {
       __pending.delete(msg.payload.requestId);
-      p.resolve(msg.payload);
+      // BUG corrigido: antes isso resolvia sempre, mesmo com ok:false —
+      // qualquer erro real do inject.js (elemento não encontrado, modal que
+      // não abriu, etc.) ficava engolido em silêncio, sem cair no catch()
+      // de quem chamou (baterPonto, addNota, removerBatida, ...).
+      if (msg.payload.ok) p.resolve(msg.payload.result);
+      else p.reject(new Error(msg.payload.error || "Ação falhou na aba do Icarus."));
     }
   }
 
@@ -72,6 +77,19 @@ const IcarusAPI = {
     return runUiAction("search", { dataInicioDDMMYYYY: fmt(dataInicioDate), dataFimDDMMYYYY: fmt(dataFimDate) });
   },
 
+  // Clica no botão real "Bater Ponto" na aba do Icarus — é o próprio site
+  // que registra e autentica a batida, com o token dele.
+  async baterPonto() {
+    return runUiAction("baterPonto", {});
+  },
+
+  // Remove de verdade uma batida existente (fluxo real: "Justificar Ponto"
+  // -> "Ajuste de Ponto" -> "Remover" -> justificativa -> "Cadastrar").
+  // Fica pendente de aprovação do gestor, como qualquer ajuste no Icarus.
+  async removerBatida(dataDDMMYYYY, horarioHHMM, justificativa) {
+    return runUiAction("removerBatida", { dataDDMMYYYY, horarioHHMM, justificativa });
+  },
+
   async addNota(dateObj, texto) {
     const fmt = (d) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
     return runUiAction("addNota", { dataDDMMYYYY: fmt(dateObj), texto });
@@ -97,6 +115,43 @@ const IcarusAPI = {
     dayList.push({ seq, label, clickedAt: Date.now(), approxTime: approxTimeHHMM });
     dayList.sort((a, b) => a.seq - b.seq);
     pendingAdjustments[dateKeyStr] = dayList;
+    await chrome.storage.local.set({ pendingAdjustments });
+  },
+
+  // Marca uma batida REAL (já existe no Icarus) como "pendente de exclusão"
+  // — puramente um lembrete local, não mexe no site. Identificada pelo
+  // horário exato (ms) da própria batida, não pela posição no dia, pra não
+  // se perder se a ordem das batidas mudar (ex: alguém adiciona uma batida
+  // mais cedo depois).
+  async markPendingDeletion(dateKeyStr, horarioMs, label, horarioFmt) {
+    const { pendingAdjustments = {} } = await chrome.storage.local.get({ pendingAdjustments: {} });
+    const dayList = (pendingAdjustments[dateKeyStr] || []).filter((p) => !(p.type === "delete" && p.horarioMs === horarioMs));
+    dayList.push({ type: "delete", horarioMs, label, horario: horarioFmt, clickedAt: Date.now() });
+    pendingAdjustments[dateKeyStr] = dayList;
+    await chrome.storage.local.set({ pendingAdjustments });
+  },
+
+  // Liga/desliga o checkbox "já conferi" de uma exclusão pendente — só
+  // risca o texto, não tira da lista. Quem tira da lista de vez é
+  // resolvePendingDeletion (cancelar) ou o gestor aprovando de verdade no
+  // Icarus (reconcilePendingAdjustments, em background.js).
+  async setPendingDeletionDone(dateKeyStr, horarioMs, done) {
+    const { pendingAdjustments = {} } = await chrome.storage.local.get({ pendingAdjustments: {} });
+    const dayList = pendingAdjustments[dateKeyStr] || [];
+    const entry = dayList.find((p) => p.type === "delete" && p.horarioMs === horarioMs);
+    if (!entry) return;
+    entry.done = done;
+    pendingAdjustments[dateKeyStr] = dayList;
+    await chrome.storage.local.set({ pendingAdjustments });
+  },
+
+  // Cancela de vez o lembrete de exclusão pendente — a batida volta a
+  // aparecer normalmente no cartão de batidas.
+  async resolvePendingDeletion(dateKeyStr, horarioMs) {
+    const { pendingAdjustments = {} } = await chrome.storage.local.get({ pendingAdjustments: {} });
+    const dayList = (pendingAdjustments[dateKeyStr] || []).filter((p) => !(p.type === "delete" && p.horarioMs === horarioMs));
+    if (dayList.length) pendingAdjustments[dateKeyStr] = dayList;
+    else delete pendingAdjustments[dateKeyStr];
     await chrome.storage.local.set({ pendingAdjustments });
   },
 };

@@ -29,10 +29,9 @@
       </div>
       <div id="calendarGrid" class="calendar-grid"></div>
       <div class="legend">
-        <span><i class="dot green"></i> Trabalhado</span>
         <span><i class="dot red"></i> Erro/Falta</span>
         <span><i class="dot purple"></i> Ajuste manual</span>
-        <span><i class="dot gray"></i> Ajuste pendente</span>
+        <span><i class="dot orange"></i> Ajuste pendente</span>
       </div>
     </section>
 
@@ -58,58 +57,50 @@
 
       <div class="hours-summary">
         <div><span class="hs-label" id="workedLabel">Trabalhado hoje</span><span id="workedToday" class="hs-value">--:--</span></div>
+        <div><span class="hs-label">Intervalo</span><span id="intervalToday" class="hs-value">--:--</span></div>
         <div><span class="hs-label" id="remainingLabel">Falta trabalhar</span><span id="remainingToday" class="hs-value">--:--</span></div>
       </div>
 
       <div id="dayPanelNota"></div>
-      <div class="modal-actions">
-        <button id="dayPanelAddNota" class="secondary-btn">Adicionar nota</button>
-      </div>
     </section>
 
     <section class="card">
-      <button id="baterPontoBtn" class="primary-btn" disabled>
-        ◎ Bater Ponto
+      <button id="baterPontoBtn" class="primary-btn">
+        ◎ Registrar Ponto
       </button>
-      <p class="hint" id="baterPontoHint">
-        Endpoint ainda não confirmado — vamos capturar juntos depois das 17h.
-      </p>
     </section>
 
-    <section class="card actions-grid">
-      <button id="registrarPontoBtn" class="secondary-btn" disabled>Registrar Ponto</button>
-      <button id="justificarBtn" class="secondary-btn" disabled>Justificar Ponto</button>
-      <button id="notasBtn" class="secondary-btn">Notas</button>
-    </section>
-
-    <details class="card debug">
-      <summary>Depuração — endpoints observados</summary>
-      <div id="endpointLog" class="endpoint-log">Nenhum ainda.</div>
-    </details>
   </main>
-
-  <div id="notaModal" class="modal hidden">
-    <div class="modal-box">
-      <div class="modal-title">Adicionar nota — <span id="notaModalDate"></span></div>
-      <textarea id="notaModalText" placeholder="Nota *"></textarea>
-      <div class="modal-actions">
-        <button id="notaModalCancel" class="secondary-btn">Cancelar</button>
-        <button id="notaModalSave" class="primary-btn">Cadastrar</button>
-      </div>
-    </div>
-  </div>
 
   <div id="punchTimeModal" class="modal hidden">
     <div class="modal-box">
       <div class="modal-title">Horário aproximado — <span id="punchTimeModalLabel"></span></div>
       <p class="hint" style="margin-top:0">
         Essa batida não foi registrada no Icarus. Informe a que horas ela aconteceu (aproximadamente) —
-        fica marcada em cinza no painel até você ajustar de verdade no Icarus.
+        fica marcada em laranja no painel até você ajustar de verdade no Icarus.
       </p>
-      <input type="time" id="punchTimeModalInput" class="time-input" />
+      <div style="display: flex; gap: 6px; align-items: center;">
+        <input type="time" id="punchTimeModalInput" class="time-input" style="flex: 1; margin-top: 0;" />
+        <button id="punchTimeModalClear" class="secondary-btn" style="margin-top: 8px; padding: 8px;">✕</button>
+      </div>
+      <div id="punchTimePreview" class="preview-box hidden" style="margin-top: 10px; padding: 8px; background: var(--bg); border-radius: 8px; text-align: center; font-size: 11px; color: var(--muted);">
+        <div style="margin-bottom: 4px;">Trabalhado: <strong id="previewWorked">--:--</strong></div>
+        <div>Falta: <strong id="previewRemaining">--:--</strong></div>
+      </div>
       <div class="modal-actions">
         <button id="punchTimeModalCancel" class="secondary-btn">Cancelar</button>
         <button id="punchTimeModalSave" class="primary-btn">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-title" id="confirmModalTitle">Confirmar</div>
+      <p class="modal-text" id="confirmModalText"></p>
+      <div class="modal-actions">
+        <button id="confirmModalCancel" class="secondary-btn">Cancelar</button>
+        <button id="confirmModalOk" class="primary-btn">OK</button>
       </div>
     </div>
   </div>

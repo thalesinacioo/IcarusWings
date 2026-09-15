@@ -34,19 +34,24 @@ automatiza a interface que você já usa manualmente — de um jeito que
     última batida
   - tags do dia (falta, inconsistente, ajuste/abono, ajustes pendentes)
   - nota do dia, se houver
-- **Notas** — adiciona uma nota/anotação real no Icarus pra um dia
+- **Registrar Ponto** — clica no ícone real de registrar ponto da tela do
+  Icarus (com confirmação antes, já que é uma ação real e irreversível),
+  confirma o modal "Deseja realmente efetuar a batida de ponto?" e
+  atualiza o painel logo em seguida. **Testado contra a página real em
+  15/09/2026.**
 - **Lembretes de bater ponto** (notificação do navegador, mesmo com o
   painel fechado) nos horários padrão 08:00 / 12:00 / 13:00 / 17:00.
   Só aparece se aquela batida ainda não foi feita — se você já bateu
   antes do horário (ex.: voltou do almoço em 30min), o lembrete nem
   aparece.
   - Botão **"Ajustar depois"** na notificação: marca aquele horário como
-    pendente (cinza) em vez de te interromper.
+    pendente (laranja) em vez de te interromper.
 - **Horário aproximado de batida faltante** — se uma batida esperada
   está atrasada (ou se você clicar num slot vazio), a extensão te
-  pergunta a que horas ela aconteceu de verdade e guarda isso em cinza no
-  painel/calendário, como lembrete visual de que ainda falta ajustar
-  aquilo de verdade no Icarus.
+  pergunta a que horas ela aconteceu de verdade. Ao digitar o horário,
+  calcula em tempo real quanto você já trabalhou e quanto ainda falta —
+  marcando em laranja no painel/calendário como lembrete visual de que
+  ainda falta ajustar aquilo de verdade no Icarus.
 
 ## Como funciona por baixo (sem tocar em credenciais)
 
@@ -87,19 +92,36 @@ Depois de qualquer atualização de código: recarregue a extensão em
 
 | Ação | Status |
 |---|---|
-| **Bater Ponto** (real) | endpoint ainda não capturado — falta clicar uma vez no botão real com a extensão observando o tráfego |
-| **Registrar Ponto / Ajuste de Ponto** | formulário mapeado, envio não testado (gera solicitação real de aprovação pro gestor) |
-| **Justificar (Abono)** | idem acima |
+| **Registrar Ponto** (real) | ✅ testado contra a página real (15/09/2026) — o botão real é um ícone sem texto no topo (tooltip "Registrar Ponto", diferente do botão de mesmo nome da tela de pesquisa), que abre o modal "Deseja realmente efetuar a batida de ponto?" com botão "Sim" |
+| **Excluir/editar batida existente** | automação (`removerBatida` em `inject.js`/`api.js`) já mapeada e com 3 bugs corrigidos no teste ao vivo (ver abaixo), mas a **UI foi removida temporariamente** (sem lápis/popup no painel) — o Icarus **exige um número par de registros por dia** (mensagem real: *"A quantidade de registros de pontos precisa ser par"*), então excluir só 1 batida de um dia com 2 não funciona sozinho; falta decidir a UX certa pra isso (ex.: exigir excluir em pares, ou editar em vez de excluir) antes de reativar |
+| **Notas** | automação (`addNota`) mantida em `inject.js`/`api.js`, mas sem botão na UI por enquanto (removido junto com o card de ações) |
+| **Justificar (Abono)** | mapeado o primeiro passo (mesmo modal "O Que Deseja Solicitar?"), fluxo completo não testado |
 | Heurística de "ajuste manual" no calendário | já confirmada contra dados reais (`ponto.temAbonoOuAjusteRegistrado`) |
+
+### Bugs corrigidos no teste ao vivo da exclusão de batida (15/09/2026)
+
+1. **`api.js`** — quando `inject.js` retornava `ok:false` (erro), o código sempre
+   **resolvia a promise como sucesso**, nunca rejeitava. Qualquer erro real
+   ficava engolido em silêncio (aparecia como "nada aconteceu" no painel).
+2. **`inject.js` — `findButtonByText`** — só olhava `textContent`. Botões de
+   ação da linha ("Notas", "Justificar Ponto", "Reprocessar Ponto") **não
+   têm texto nenhum**, só ícone com tooltip no atributo `title`. Corrigido
+   pra cair no `title`/`aria-label` quando o texto não bate.
+3. **`inject.js` — `findAjusteRegistroRow`** — exigia um nó-folha
+   (`children.length === 0`) pra achar o horário do registro, mas ele fica
+   num `<td class="p-editable-column">` com 1 filho. Corrigido.
+4. **Textarea errada** — o campo de Justificativa do Icarus é um MUI
+   multiline com **dois** `<textarea>` no DOM: o real (`name="justificativa"`)
+   e um `aria-hidden`/`readonly` só pra medir altura (auto-resize). Pegar
+   "o último textarea da página" pegava o errado. Corrigido pra mirar
+   `textarea[name="justificativa"]`.
 
 ### Como destravar as ações pendentes
 
 `inject.js` já observa passivamente todo tráfego pra
-`backendicarus.pontoicarus.com.br`. Basta usar a função normalmente **uma
-vez** direto no site (com a extensão instalada): a URL e o método
-aparecem na aba **"Depuração — endpoints observados"** do painel. A
-partir daí, dá pra automatizar via clique real no botão (mesmo padrão de
-`uiAddNota` em `inject.js`), sem nunca precisar adivinhar payload.
+`backendicarus.pontoicarus.com.br`. As ações de "Registrar Ponto" e
+"Justificar" já seguem o mesmo padrão: clicam os botões reais da página
+(sem nunca precisar adivinhar payload ou ler token).
 
 ## Arquitetura (resumo)
 
@@ -115,7 +137,7 @@ background.js      (service worker)
                     → roteia mensagens, guarda estado (registros, pendências)
                     → agenda os lembretes (chrome.alarms) e as notificações
         ↕ chrome.runtime
-api.js + sidepanel.js → UI: calendário, painel do dia, notas, lembretes
+api.js + sidepanel.js → UI: calendário, painel do dia, lembretes
 ```
 
 Nenhuma credencial passa por `background.js` nem por `sidepanel.js` — só
