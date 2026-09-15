@@ -68,6 +68,7 @@ body {
   padding: 12px;
 }
 .card-title { font-weight: 600; margin-bottom: 8px; }
+.wip-tag { font-weight: 400; font-size: 10.5px; color: var(--muted); }
 
 .status {
   border-radius: 10px;
@@ -89,24 +90,24 @@ body {
 .weekdays, .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
+  gap: 2px;
   text-align: center;
 }
-.weekdays { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+.weekdays { color: var(--muted); font-size: 14px; margin-bottom: 3px; }
 .calendar-grid .day {
   position: relative;
-  padding: 6px 0;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: 4px 0;
+  border-radius: 6px;
+  font-size: 16px;
   cursor: default;
 }
 .calendar-grid .day.empty { visibility: hidden; }
 .calendar-grid .day .chip {
   display: inline-block;
-  width: 22px;
-  height: 22px;
-  line-height: 22px;
-  border-radius: 7px;
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  border-radius: 6px;
 }
 .calendar-grid .day.green .chip { background: var(--green); color: #fff; }
 .calendar-grid .day.red .chip { background: var(--red); color: #fff; }
@@ -169,6 +170,9 @@ body {
 }
 .hs-label { display: block; font-size: 10px; color: var(--muted); }
 .hs-value { display: block; font-weight: 700; font-size: 15px; margin-top: 2px; }
+
+.period-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.period-summary > div { background: var(--bg); border-radius: 9px; padding: 8px; text-align: center; }
 
 .primary-btn {
   width: 100%;
@@ -352,3 +356,7 @@ body {
 
 .preview-box { background: var(--bg); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text); }
 .preview-box strong { font-weight: 600; }
+
+.app-footer { text-align: center; padding: 10px 0 14px; font-size: 10.5px; color: var(--muted); }
+.app-footer a { color: var(--orange); font-weight: 600; text-decoration: none; }
+.app-footer a:hover { text-decoration: underline; }

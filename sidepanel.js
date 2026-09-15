@@ -37,6 +37,8 @@ const PUNCH_SCHEDULE = [
 ];
 const MISSING_PUNCH_GRACE_MIN = 60; // só avisa depois de 1h do horário esperado
 const DEFAULT_JORNADA_MIN = 8 * 60; // meta do dia (08-12 + 13-17) quando o Icarus ainda não tem registro nenhum pro dia
+const MINUTOS_ABONO_POR_DIA_UTIL = 48; // regra do RH: teto de flexibilização = dias úteis do período × 48min
+const GITHUB_REPO = "thalesinacioo/IcarusWings";
 
 let currentMonth = new Date().getMonth();
 let currentYear = new Date().getFullYear();
@@ -136,12 +138,164 @@ async function fetchMonth() {
   showStatus("Buscando na aba do Icarus…", "info");
   try {
     await IcarusAPI.searchPeriod(first, last);
-    setTimeout(async () => {
-      const { data } = await IcarusAPI.getLastRegistros();
-      if (data) ingestRegistros(data);
-    }, 1200);
+    await new Promise((r) => setTimeout(r, 1200));
+    const { data } = await IcarusAPI.getLastRegistros();
+    if (data) ingestRegistros(data);
   } catch (err) {
     showStatus(`Erro ao buscar: ${err.message}`, "error");
+  }
+}
+
+// ---------- flexibilização / abono (regra do RH) ----------
+//
+// Regra (e-mail do RH, jun/23):
+//  - período de apuração: do dia 26 de um mês ao dia 25 do próximo
+//  - teto do mês = dias úteis do período × 48min
+//  - abono = saldo negativo do período (créditos - débitos), limitado ao
+//    teto; se o saldo fechar positivo ou zero, não tem abono
+//
+// "dias úteis" aqui considera só feriados NACIONAIS (fixos + móveis via
+// Páscoa) — feriados estaduais/municipais da sua cidade não entram nessa
+// conta, então o número pode variar 1 dia (±48min no teto) em relação ao
+// e-mail oficial do RH em meses com feriado local.
+
+function easterDate(year) {
+  // algoritmo de Meeus/Jones/Butcher
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+function nationalHolidaySet(year) {
+  const easter = easterDate(year);
+  const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
+  return [
+    new Date(year, 0, 1), // Confraternização Universal
+    addDays(easter, -48), // Carnaval (segunda)
+    addDays(easter, -47), // Carnaval (terça)
+    addDays(easter, -2), // Sexta-feira Santa
+    addDays(easter, 60), // Corpus Christi
+    new Date(year, 3, 21), // Tiradentes
+    new Date(year, 4, 1), // Dia do Trabalho
+    new Date(year, 8, 7), // Independência
+    new Date(year, 9, 12), // N. Sra. Aparecida
+    new Date(year, 10, 2), // Finados
+    new Date(year, 10, 15), // Proclamação da República
+    new Date(year, 10, 20), // Consciência Negra
+    new Date(year, 11, 25), // Natal
+  ].map(dateKey);
+}
+
+// Conta dias úteis (seg-sex, sem feriado nacional) entre start e end, ambos inclusive.
+function countBusinessDays(start, end) {
+  const holidays = new Set();
+  for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
+    nationalHolidaySet(y).forEach((k) => holidays.add(k));
+  }
+  let count = 0;
+  const d = new Date(start);
+  while (d <= end) {
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6 && !holidays.has(dateKey(d))) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return count;
+}
+
+// Período de apuração corrente (contém a data passada): dia 26 de um mês
+// ao dia 25 do próximo.
+function apuracaoPeriodFor(date) {
+  const inicioNoMesAtual = date.getDate() >= 26;
+  const start = inicioNoMesAtual
+    ? new Date(date.getFullYear(), date.getMonth(), 26)
+    : new Date(date.getFullYear(), date.getMonth() - 1, 26);
+  const end = inicioNoMesAtual
+    ? new Date(date.getFullYear(), date.getMonth() + 1, 25)
+    : new Date(date.getFullYear(), date.getMonth(), 25);
+  return { start, end };
+}
+
+function renderFlexibilizacaoFromCache(start, end, tetoMin) {
+  let workedTotal = 0;
+  let saldoTotal = 0;
+  const d = new Date(start);
+  while (d <= end) {
+    const ponto = registrosPorDia[dateKey(d)];
+    if (ponto) {
+      const extra = (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0);
+      workedTotal += (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) + extra;
+      saldoTotal += extra - (ponto.minutoFaltante || 0);
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  const abonoMin = saldoTotal < 0 ? Math.min(-saldoTotal, tetoMin) : 0;
+  $("#periodoWorkedTotal").textContent = minutesToHHMM(workedTotal);
+  $("#abonoEstimado").textContent = minutesToHHMM(abonoMin);
+}
+
+// Mostra período/teto/valores na hora com o que já tiver em cache — sem
+// esperar rede, mesmo padrão do resto do painel (nunca abre vazio).
+function showFlexibilizacaoInstant() {
+  const { start, end } = apuracaoPeriodFor(new Date());
+  const diasUteis = countBusinessDays(start, end);
+  const tetoMin = diasUteis * MINUTOS_ABONO_POR_DIA_UTIL;
+  const fmtDDMM = (d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  $("#periodoRange").textContent = `${fmtDDMM(start)} – ${fmtDDMM(end)} · ${diasUteis} dias úteis · teto ${minutesToHHMM(tetoMin)}`;
+  renderFlexibilizacaoFromCache(start, end, tetoMin);
+  return { start, end, tetoMin };
+}
+
+async function fetchFlexibilizacao() {
+  const { start, end, tetoMin } = showFlexibilizacaoInstant();
+  try {
+    await IcarusAPI.searchPeriod(start, end);
+    await new Promise((r) => setTimeout(r, 1200));
+    const { data } = await IcarusAPI.getLastRegistros();
+    if (data) ingestRegistros(data);
+  } catch (err) {
+    return; // já mostrou o que tinha em cache, não tem mais nada a fazer
+  }
+  renderFlexibilizacaoFromCache(start, end, tetoMin);
+}
+
+// ---------- versão / checagem de atualização ----------
+
+function compareVersions(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+async function checkForUpdate() {
+  const current = chrome.runtime.getManifest().version;
+  const versionEl = $("#appVersion");
+  versionEl.textContent = `v${current}`;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
+    if (!res.ok) return; // sem release publicado ainda, ou API fora do ar — só mostra a versão instalada
+    const release = await res.json();
+    const latest = (release.tag_name || "").replace(/^v/, "");
+    if (latest && compareVersions(latest, current) > 0) {
+      versionEl.innerHTML = `v${current} · <a href="${release.html_url}" target="_blank" rel="noopener">Nova versão disponível (v${latest})</a>`;
+    }
+  } catch (err) {
+    // sem internet — mantém só a versão instalada, sem travar nada
   }
 }
 
@@ -656,7 +810,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (currentMonth > 11) { currentMonth = 0; currentYear++; }
     loadMonth();
   });
-  $("#refreshBtn").addEventListener("click", () => { fetchMonth(); });
+  $("#refreshBtn").addEventListener("click", async () => {
+    await fetchMonth();
+    fetchFlexibilizacao();
+  });
 
   $("#backToTodayBtn").addEventListener("click", () => {
     selectedDayKey = null;
@@ -690,6 +847,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderCalendar();
   renderDayPanel();
   loadPendingAdjustments();
-  // 3) só então dispara a busca real (assíncrona) que atualiza os dias
-  fetchMonth();
+  showFlexibilizacaoInstant();
+  checkForUpdate();
+  // 3) só então dispara a busca real (assíncrona) que atualiza os dias —
+  // em sequência, não em paralelo, pra não disputar a mesma aba do Icarus
+  await fetchMonth();
+  fetchFlexibilizacao();
 });
