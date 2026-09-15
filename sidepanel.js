@@ -36,6 +36,7 @@ const PUNCH_SCHEDULE = [
   { seq: 4, hh: 17, mm: 0, label: "saída (2ª saída)" },
 ];
 const MISSING_PUNCH_GRACE_MIN = 60; // só avisa depois de 1h do horário esperado
+const DEFAULT_JORNADA_MIN = 8 * 60; // meta do dia (08-12 + 13-17) quando o Icarus ainda não tem registro nenhum pro dia
 
 let currentMonth = new Date().getMonth();
 let currentYear = new Date().getFullYear();
@@ -121,6 +122,33 @@ function isBatidaManual(b) {
   return b.tipoRegistro && b.tipoRegistro !== "O";
 }
 
+/**
+ * Horário (timestamp) de um ajuste pendente, pra poder ordená-lo junto
+ * com as batidas reais. Usa o horário aproximado informado; se ainda não
+ * informou nenhum, cai pro momento em que clicou "ajustar depois" (só
+ * como posição provisória).
+ */
+function pendingTimeMs(dayDate, pend) {
+  if (pend.approxTime) {
+    const [hh, mm] = pend.approxTime.split(":").map(Number);
+    return new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), hh, mm, 0, 0).getTime();
+  }
+  return pend.clickedAt;
+}
+
+/**
+ * Batidas reais + ajustes pendentes, todos juntos em ordem cronológica
+ * real (não pela ordem em que foram digitados/pela "seq" do lembrete).
+ * É isso que corrige uma batida digitada fora de ordem (ex: "2ª saída"
+ * digitada com horário anterior a uma batida real já registrada).
+ */
+function mergedPunchesForDay(key, ordenadas, diaPending) {
+  const dayDate = keyToDate(key);
+  const real = ordenadas.map((b) => ({ timeMs: b.horario, real: b }));
+  const pending = diaPending.map((p) => ({ timeMs: pendingTimeMs(dayDate, p), pending: p }));
+  return [...real, ...pending].sort((a, b) => a.timeMs - b.timeMs);
+}
+
 function classifyDay(ponto) {
   if (!ponto) return null;
   // Roxo tem prioridade: o dia teve ajuste/abono registrado no Icarus.
@@ -196,34 +224,35 @@ function renderDayPanel() {
   if (diaPending.length) tags.push(`<span class="tag gray">${diaPending.length} ajuste${diaPending.length > 1 ? "s" : ""} pendente${diaPending.length > 1 ? "s" : ""}</span>`);
   $("#dayPanelTags").innerHTML = tags.join("");
 
-  // 4 batidas (compacto)
+  // 4 batidas (compacto) — reais e pendentes juntas, em ordem cronológica real
+  const merged = mergedPunchesForDay(key, ordenadas, diaPending);
   document.querySelectorAll(".punch").forEach((el) => {
     const seq = Number(el.dataset.seq);
-    const b = ordenadas[seq - 1];
+    const item = merged[seq - 1];
     const valueEl = el.querySelector(".value");
     el.classList.remove("manual", "pending", "fillable");
     el.onclick = null;
-    if (b) {
+    if (item?.real) {
+      const b = item.real;
       valueEl.textContent = b.horarioFormatadoSemData || "--:--";
       el.classList.toggle("manual", isBatidaManual(b));
       el.title = `${b.marcacaoFmt || ""}${isBatidaManual(b) ? ` · ${b.tipoRegistroFmt}` : ""}`;
+    } else if (item?.pending) {
+      const pend = item.pending;
+      const label = pend.label || PUNCH_SCHEDULE.find((s) => s.seq === pend.seq)?.label || `${seq}ª batida`;
+      const shown = pend.approxTime || hhmm(pend.clickedAt);
+      valueEl.textContent = `~${shown}`;
+      el.classList.add("pending", "fillable");
+      el.title = pend.approxTime
+        ? `Horário aproximado informado: ${pend.approxTime} — ainda não registrado no Icarus. Clique pra editar.`
+        : `Marcado como "ajustar depois" às ${hhmm(pend.clickedAt)} — ainda não registrado no Icarus. Clique pra informar o horário.`;
+      el.onclick = () => openPunchTimeModal(key, pend.seq, label, pend.approxTime);
     } else {
-      const pend = diaPending.find((p) => p.seq === seq);
       const label = PUNCH_SCHEDULE.find((s) => s.seq === seq)?.label || `${seq}ª batida`;
-      if (pend) {
-        const shown = pend.approxTime || hhmm(pend.clickedAt);
-        valueEl.textContent = `~${shown}`;
-        el.classList.add("pending", "fillable");
-        el.title = pend.approxTime
-          ? `Horário aproximado informado: ${pend.approxTime} — ainda não registrado no Icarus. Clique pra editar.`
-          : `Marcado como "ajustar depois" às ${hhmm(pend.clickedAt)} — ainda não registrado no Icarus. Clique pra informar o horário.`;
-        el.onclick = () => openPunchTimeModal(key, seq, label, pend.approxTime);
-      } else {
-        valueEl.textContent = "--:--";
-        el.classList.add("fillable");
-        el.title = "Batida não registrada. Clique pra informar o horário aproximado.";
-        el.onclick = () => openPunchTimeModal(key, seq, label, null);
-      }
+      valueEl.textContent = "--:--";
+      el.classList.add("fillable");
+      el.title = "Batida não registrada. Clique pra informar o horário aproximado.";
+      el.onclick = () => openPunchTimeModal(key, seq, label, null);
     }
   });
 
@@ -332,30 +361,55 @@ async function savePunchTimeModal() {
  * está em aberto — somamos o tempo corrido desde a última batida.
  */
 function tickLive() {
-  const ponto = registrosPorDia[dateKey(new Date())];
+  const key = dateKey(new Date());
+  const ponto = registrosPorDia[key];
   const workedEl = $("#workedToday");
   const remainingEl = $("#remainingToday");
 
-  if (!ponto) {
+  const ordenadas = ponto ? batidasOrdenadas(ponto) : [];
+  // batida(s) digitada(s) mas ainda não enviada(s) ao Icarus — o Icarus só
+  // viu as reais, então não dá pra confiar no total dele; recalculamos
+  // somando os intervalos entrada/saída da sequência completa (real + pendente).
+  const diaPendingComHorario = (pendingAdjustments[key] || []).filter((p) => p.approxTime);
+
+  if (!ponto && !diaPendingComHorario.length) {
+    // nada aconteceu hoje ainda: nem batida real registrada no Icarus, nem digitada
     workedEl.textContent = "--:--";
     remainingEl.textContent = "--:--";
+    workedEl.parentElement.classList.remove("running");
     return;
   }
 
-  const ordenadas = batidasOrdenadas(ponto);
-  const emAndamento = ordenadas.length % 2 === 1;
-  const decorridoAberto = emAndamento ? (Date.now() - ordenadas[ordenadas.length - 1].horario) / 60000 : 0;
+  const trabalhadoApiBase = ponto
+    ? (ponto.minutoNormalDiurno || 0) +
+      (ponto.minutoNormalNoturno || 0) +
+      (ponto.minutoExtraTP1 || 0) +
+      (ponto.minutoExtraTP2 || 0) +
+      (ponto.minutoExtraTP3 || 0)
+    : 0;
+  // sem ponto (Icarus ainda não tem nenhum registro do dia) não dá pra saber
+  // a meta real, então usa a jornada padrão só pra não deixar "Falta
+  // trabalhar" vazio.
+  const metaMin = ponto ? trabalhadoApiBase + (ponto.minutoFaltante || 0) : DEFAULT_JORNADA_MIN;
 
-  const trabalhadoApi =
-    (ponto.minutoNormalDiurno || 0) +
-    (ponto.minutoNormalNoturno || 0) +
-    (ponto.minutoExtraTP1 || 0) +
-    (ponto.minutoExtraTP2 || 0) +
-    (ponto.minutoExtraTP3 || 0);
+  let workedMin;
+  let emAndamento;
+  if (diaPendingComHorario.length) {
+    const merged = mergedPunchesForDay(key, ordenadas, diaPendingComHorario);
+    workedMin = 0;
+    for (let i = 0; i + 1 < merged.length; i += 2) {
+      workedMin += (merged[i + 1].timeMs - merged[i].timeMs) / 60000;
+    }
+    emAndamento = merged.length % 2 === 1;
+    if (emAndamento) workedMin += (Date.now() - merged[merged.length - 1].timeMs) / 60000;
+  } else {
+    emAndamento = ordenadas.length % 2 === 1;
+    const decorridoAberto = emAndamento ? (Date.now() - ordenadas[ordenadas.length - 1].horario) / 60000 : 0;
+    workedMin = trabalhadoApiBase + decorridoAberto;
+  }
 
-  workedEl.textContent = minutesToHHMM(trabalhadoApi + decorridoAberto);
-  remainingEl.textContent = minutesToHHMM(Math.max(0, (ponto.minutoFaltante || 0) - decorridoAberto));
-
+  workedEl.textContent = minutesToHHMM(workedMin);
+  remainingEl.textContent = minutesToHHMM(Math.max(0, metaMin - workedMin));
   workedEl.parentElement.classList.toggle("running", emAndamento);
 }
 
