@@ -1,5 +1,7 @@
 # IcarusWings
 
+![Painel Ponto Icarus](docs/screenshot.png)
+
 Extensão de Chrome (painel lateral) que te dá uma visão rápida e prática
 do seu ponto no [Ponto Icarus](https://web.pontoicarus.com.br/ponto) —
 calendário do mês, batidas do dia, saldo de horas e lembretes — sem
