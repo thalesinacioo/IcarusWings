@@ -10,7 +10,7 @@
   <header class="topbar">
     <div class="brand">
       <span class="dot"></span>
-      <strong>Ponto Icarus</strong>
+      <strong id="appTitle">Ponto Icarus</strong>
     </div>
     <button id="refreshBtn" class="icon-btn" title="Atualizar">⟳</button>
   </header>
@@ -73,11 +73,19 @@
     <section class="card">
       <div class="card-title">Flexibilização do mês <span class="wip-tag">(ainda em construção)</span></div>
       <div class="period-summary">
-        <div><span class="hs-label">Estimado do período</span><span id="periodoEstimadoTotal" class="hs-value">--:--</span></div>
-        <div><span class="hs-label">Trabalhado no período</span><span id="periodoWorkedTotal" class="hs-value">--:--</span></div>
+        <div><span class="hs-label">Saldo de Horas</span><span id="saldoHoras" class="hs-value">--:--</span></div>
         <div><span class="hs-label">Abono estimado</span><span id="abonoEstimado" class="hs-value">--:--</span></div>
+        <div><span class="hs-label">Horas do Mês</span><span id="periodoWorkedTotal" class="hs-value">--:--</span></div>
       </div>
       <p class="hint" id="periodoRange">—</p>
+    </section>
+
+    <section class="card">
+      <div class="card-title">Configurações</div>
+      <label class="settings-row">
+        <input type="checkbox" id="almocoUmaHoraCheck" />
+        Faço intervalo de 1h no almoço
+      </label>
     </section>
 
   </main>

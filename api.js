@@ -70,6 +70,16 @@ const IcarusAPI = {
     return lastTurno || null;
   },
 
+  // Intervalo mínimo de almoço usado só na previsão (~) das batidas — 30 ou
+  // 60min. Não altera nada no Icarus, é só um parâmetro do cálculo local.
+  async getAlmocoMinConfig() {
+    const { almocoMinConfig } = await chrome.storage.local.get({ almocoMinConfig: 30 });
+    return almocoMinConfig;
+  },
+  async setAlmocoMinConfig(min) {
+    await chrome.storage.local.set({ almocoMinConfig: min });
+  },
+
   // Preenche o período na tela real e clica em "Pesquisar" — os dados
   // chegam de volta via o evento "icarus:observed" (resposta real do site).
   async searchPeriod(dataInicioDate, dataFimDate) {

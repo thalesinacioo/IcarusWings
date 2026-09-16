@@ -39,8 +39,11 @@ const MISSING_PUNCH_GRACE_MIN = 60; // só avisa depois de 1h do horário espera
 const DEFAULT_JORNADA_MIN = 8 * 60; // meta do dia (08-12 + 13-17) quando o Icarus ainda não tem registro nenhum pro dia
 const MINUTOS_ABONO_POR_DIA_UTIL = 48; // regra do RH: teto de flexibilização = dias úteis do período × 48min
 const JORNADA_PADRAO_MIN = 8 * 60 + 48; // 8:48 — jornada padrão usada como base pra prever as batidas restantes do dia
-const MIN_ALMOCO_MIN = 30; // menor intervalo de almoço aceito, usado pra prever a volta do almoço
 const GITHUB_REPO = "thalesinacioo/IcarusWings";
+
+// Intervalo de almoço usado na previsão — configurável (checkbox), 30min por
+// padrão. Carregado no boot via IcarusAPI.getAlmocoMinConfig().
+let almocoMinAtual = 30;
 
 let currentMonth = new Date().getMonth();
 let currentYear = new Date().getFullYear();
@@ -269,6 +272,45 @@ function abonoMinForToday() {
   return Math.min(abonoPeriodo, MINUTOS_ABONO_POR_DIA_UTIL);
 }
 
+function parseHHMMToMinutes(str) {
+  if (typeof str !== "string") return null;
+  const m = /^(-?)(\d+):(\d{2})$/.exec(str.trim());
+  if (!m) return null;
+  const sign = m[1] === "-" ? -1 : 1;
+  return sign * (Number(m[2]) * 60 + Number(m[3]));
+}
+
+// Ajuste pendente em qualquer dia do período: solicitação real no Icarus
+// ainda aguardando o gestor, OU lembrete local da extensão ("ajustar
+// depois"/horário aproximado ainda não registrado).
+function periodoTemAjustePendente(start, end) {
+  const d = new Date(start);
+  while (d <= end) {
+    const key = dateKey(d);
+    const ponto = registrosPorDia[key];
+    if (ponto?.temAbonoOuAjusteRegistrado === true && (ponto.statusSolicitacao || "").toLowerCase().includes("aguardando")) return true;
+    if ((pendingAdjustments[key] || []).length > 0) return true;
+    d.setDate(d.getDate() + 1);
+  }
+  return false;
+}
+
+// Dia do período em que o Icarus registrou trabalho mas com menos de 4
+// batidas reais — mesma heurística de "trabalhou algo" do classifyDay.
+function periodoTemDiaComPoucasBatidas(start, end) {
+  const d = new Date(start);
+  while (d <= end) {
+    const ponto = registrosPorDia[dateKey(d)];
+    if (ponto) {
+      const batidas = batidasOrdenadas(ponto);
+      const trabalhouAlgo = (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) > 0 || batidas.length > 0;
+      if (trabalhouAlgo && batidas.length < 4) return true;
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return false;
+}
+
 function renderFlexibilizacaoFromCache(start, end, tetoMin) {
   let workedTotal = 0;
   const d = new Date(start);
@@ -283,38 +325,36 @@ function renderFlexibilizacaoFromCache(start, end, tetoMin) {
   const abonoMin = abonoMinForPeriod(start, end, tetoMin);
   $("#periodoWorkedTotal").textContent = minutesToHHMM(workedTotal);
   $("#abonoEstimado").textContent = minutesToHHMM(abonoMin);
+
+  const saldoEl = $("#saldoHoras");
+  const saldo = saldoHorasAtual();
+  saldoEl.textContent = saldo || "--:--";
+  saldoEl.classList.toggle("negative", typeof saldo === "string" && saldo.trim().startsWith("-"));
+
+  const saldoMin = parseHHMMToMinutes(saldo);
+  if (saldoMin !== null && saldoMin < 0 && -saldoMin > abonoMin) {
+    if (periodoTemAjustePendente(start, end)) {
+      saldoEl.title = "Parece que tem ajustes pendentes, verifique com seu gestor.";
+    } else if (periodoTemDiaComPoucasBatidas(start, end)) {
+      saldoEl.title = "Verifique suas horas, você tem inconsistências.";
+    } else {
+      saldoEl.title = "Parece que suas horas estão abaixo do esperado, acho que você tem problemas.";
+    }
+  } else {
+    saldoEl.title = "";
+  }
 }
 
-// Quanto da jornada padrão de hoje (PUNCH_SCHEDULE: 08-12 + 13-17) já devia
-// ter sido cumprido até agora — sobe aos poucos ao longo do dia, para no
-// almoço, e satura em DEFAULT_JORNADA_MIN a partir do horário de saída.
-function expectedMinutesSoFarToday(now) {
-  const toMin = (hh, mm) => hh * 60 + mm;
-  const entrada = toMin(PUNCH_SCHEDULE[0].hh, PUNCH_SCHEDULE[0].mm);
-  const saidaAlmoco = toMin(PUNCH_SCHEDULE[1].hh, PUNCH_SCHEDULE[1].mm);
-  const voltaAlmoco = toMin(PUNCH_SCHEDULE[2].hh, PUNCH_SCHEDULE[2].mm);
-  const saida = toMin(PUNCH_SCHEDULE[3].hh, PUNCH_SCHEDULE[3].mm);
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  const manha = Math.max(0, Math.min(nowMin, saidaAlmoco) - entrada);
-  const tarde = Math.max(0, Math.min(nowMin, saida) - voltaAlmoco);
-  return manha + tarde;
-}
-
-// Quantas horas já deveriam ter sido trabalhadas no período, até agora
-// (dias úteis anteriores completos × jornada padrão, + o pedaço de hoje já
-// decorrido segundo o horário esperado).
-function estimatedWorkedSoFar(start, end) {
-  const now = new Date();
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  if (today < start) return 0;
-  if (today > end) return countBusinessDays(start, end) * DEFAULT_JORNADA_MIN;
-
-  const ontem = new Date(today);
-  ontem.setDate(ontem.getDate() - 1);
-  let minutos = ontem >= start ? countBusinessDays(start, ontem) * DEFAULT_JORNADA_MIN : 0;
-  if (isBusinessDay(today)) minutos += expectedMinutesSoFarToday(now);
-  return minutos;
+// Saldo de horas de HOJE, direto do próprio Icarus (ponto.tempoSaldo — já
+// vinha só no tooltip do calendário). Se hoje ainda não tem esse campo
+// calculado (sem batida ainda), usa o do último dia anterior que tiver.
+function saldoHorasAtual() {
+  const todayKey = dateKey(new Date());
+  if (registrosPorDia[todayKey]?.tempoSaldo) return registrosPorDia[todayKey].tempoSaldo;
+  const keysComSaldo = Object.keys(registrosPorDia)
+    .filter((k) => k <= todayKey && registrosPorDia[k]?.tempoSaldo)
+    .sort();
+  return keysComSaldo.length ? registrosPorDia[keysComSaldo[keysComSaldo.length - 1]].tempoSaldo : null;
 }
 
 // Mostra período/teto/valores na hora com o que já tiver em cache — sem
@@ -325,7 +365,6 @@ function showFlexibilizacaoInstant() {
   const tetoMin = diasUteis * MINUTOS_ABONO_POR_DIA_UTIL;
   const fmtDDMM = (d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
   $("#periodoRange").textContent = `${fmtDDMM(start)} – ${fmtDDMM(end)} · ${diasUteis} dias úteis · teto ${minutesToHHMM(tetoMin)}`;
-  $("#periodoEstimadoTotal").textContent = minutesToHHMM(estimatedWorkedSoFar(start, end));
   renderFlexibilizacaoFromCache(start, end, tetoMin);
   return { start, end, tetoMin };
 }
@@ -358,17 +397,33 @@ function compareVersions(a, b) {
 async function checkForUpdate() {
   const current = chrome.runtime.getManifest().version;
   const versionEl = $("#appVersion");
-  versionEl.textContent = `v${current}`;
+  versionEl.textContent = `Versão atual: v${current}`;
   try {
     const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
     if (!res.ok) return; // sem release publicado ainda, ou API fora do ar — só mostra a versão instalada
     const release = await res.json();
     const latest = (release.tag_name || "").replace(/^v/, "");
     if (latest && compareVersions(latest, current) > 0) {
-      versionEl.innerHTML = `v${current} · <a href="${release.html_url}" target="_blank" rel="noopener">Nova versão disponível (v${latest})</a>`;
+      versionEl.innerHTML = `Versão atual: v${current} · <a href="${release.html_url}" target="_blank" rel="noopener">Nova versão disponível (v${latest})</a>`;
     }
   } catch (err) {
     // sem internet — mantém só a versão instalada, sem travar nada
+  }
+}
+
+// ---------- nome do colaborador (header) ----------
+//
+// Campo confirmado inspecionando a resposta real de
+// buscarTurnoVinculadoColaborador: lastTurno.mutuario.pessoa.nome (nome
+// completo) / .primeiroNome. Se ainda não buscou nenhum turno, mantém
+// "Ponto Icarus" (fallback já escrito no HTML).
+async function loadNomeColaborador() {
+  try {
+    const turno = await IcarusAPI.getLastTurno();
+    const nome = turno?.mutuario?.pessoa?.nome;
+    if (nome) $("#appTitle").textContent = nome;
+  } catch (err) {
+    // sem dado ainda — mantém o fallback "Ponto Icarus"
   }
 }
 
@@ -417,11 +472,14 @@ function mergedPunchesForDay(key, ordenadas, diaPending) {
   return [...real, ...pending].sort((a, b) => a.timeMs - b.timeMs);
 }
 
-function classifyDay(ponto) {
+function classifyDay(ponto, isToday) {
   if (!ponto) return null;
   // Roxo tem prioridade: o dia teve ajuste/abono registrado no Icarus.
   if (ponto.temAbonoOuAjusteRegistrado === true) return "purple";
-  if (ponto.falta === "SIM" || ponto.consistente === "NAO") return "red";
+  // Hoje ainda está em andamento — o Icarus marca falta/inconsistente pra
+  // qualquer dia incompleto, inclusive hoje, mas isso não é um erro real
+  // até o dia terminar. Só conta pra dias anteriores.
+  if (!isToday && (ponto.falta === "SIM" || ponto.consistente === "NAO")) return "red";
   const batidas = batidasOrdenadas(ponto);
   const trabalhouAlgo = (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) > 0 || batidas.length > 0;
   return trabalhouAlgo ? "green" : null;
@@ -444,7 +502,7 @@ function renderCalendar() {
     const d = new Date(currentYear, currentMonth, day);
     const key = dateKey(d);
     const ponto = registrosPorDia[key];
-    const cls = classifyDay(ponto);
+    const cls = classifyDay(ponto, key === todayKey);
     const hasPending = (pendingAdjustments[key] || []).length > 0;
     const isSelected = selectedDayKey ? key === selectedDayKey : key === todayKey;
     const cell = document.createElement("div");
@@ -497,8 +555,10 @@ function renderDayPanel() {
   // tags do dia
   const tags = [];
   if (ponto?.temAbonoOuAjusteRegistrado) tags.push(`<span class="tag purple">Ajuste/abono${ponto.statusSolicitacao ? " · " + ponto.statusSolicitacao.toLowerCase() : ""}</span>`);
-  if (ponto?.falta === "SIM") tags.push('<span class="tag red">Falta</span>');
-  if (ponto?.consistente === "NAO") tags.push('<span class="tag red">Inconsistente</span>');
+  // Hoje ainda está em andamento — falta/inconsistente só vale pra dias
+  // anteriores já fechados (ver classifyDay).
+  if (!isToday && ponto?.falta === "SIM") tags.push('<span class="tag red">Falta</span>');
+  if (!isToday && ponto?.consistente === "NAO") tags.push('<span class="tag red">Inconsistente</span>');
   if (diaPending.length) tags.push(`<span class="tag orange">${diaPending.length} ajuste${diaPending.length > 1 ? "s" : ""} pendente${diaPending.length > 1 ? "s" : ""}</span>`);
   $("#dayPanelTags").innerHTML = tags.join("");
 
@@ -620,7 +680,6 @@ function renderDayPanel() {
       $("#remainingToday").textContent = ponto?.tempoFaltando || "--:--";
     }
     $("#intervalToday").textContent = ponto ? minutesToHHMM(intervalMinutesFromTimes(mergedTimesSel)) : "--:--";
-    $("#workedToday").parentElement.classList.remove("running");
   }
 }
 
@@ -803,7 +862,6 @@ function tickLive() {
     workedEl.textContent = "--:--";
     intervalEl.textContent = "--:--";
     remainingEl.textContent = "--:--";
-    workedEl.parentElement.classList.remove("running");
     [punch2, punch3, punch4].forEach((el) => el?.classList.remove("predicted"));
     return;
   }
@@ -846,7 +904,6 @@ function tickLive() {
   workedEl.textContent = minutesToHHMM(workedMin);
   intervalEl.textContent = minutesToHHMM(intervalMinutesFromTimes(mergedTimes));
   remainingEl.textContent = minutesToHHMM(remainingMin);
-  workedEl.parentElement.classList.toggle("running", emAndamento);
 
   // previsão das batidas restantes — estimativa a partir da 1ª batida real
   // (jornada padrão 8:48 menos o abono do período, dividida em duas metades
@@ -864,7 +921,7 @@ function tickLive() {
     const metaMin = Math.max(0, JORNADA_PADRAO_MIN - abonoMinForToday());
     const metadeMin = metaMin / 2;
     const saida1Pred = mergedTimes[0] + metadeMin * 60000;
-    const entrada2Pred = saida1Pred + MIN_ALMOCO_MIN * 60000;
+    const entrada2Pred = saida1Pred + almocoMinAtual * 60000;
     const saida2Pred = entrada2Pred + metadeMin * 60000;
     applyPredictedPunch(punch2, saida1Pred, "Previsão de saída pro almoço (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
     applyPredictedPunch(punch3, entrada2Pred, "Previsão de volta do almoço (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
@@ -873,7 +930,7 @@ function tickLive() {
     const metaMin = Math.max(0, JORNADA_PADRAO_MIN - abonoMinForToday());
     const manhaMin = (mergedTimes[1] - mergedTimes[0]) / 60000;
     const restanteMin = Math.max(0, metaMin - manhaMin);
-    const entrada2Pred = mergedTimes[1] + MIN_ALMOCO_MIN * 60000;
+    const entrada2Pred = mergedTimes[1] + almocoMinAtual * 60000;
     const saida2Pred = entrada2Pred + restanteMin * 60000;
     applyPredictedPunch(punch3, entrada2Pred, "Previsão de volta do almoço (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
     applyPredictedPunch(punch4, saida2Pred, "Previsão de saída (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
@@ -935,6 +992,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   $("#baterPontoBtn").addEventListener("click", baterPonto);
 
+  $("#almocoUmaHoraCheck").addEventListener("change", async (ev) => {
+    almocoMinAtual = ev.target.checked ? 60 : 30;
+    await IcarusAPI.setAlmocoMinConfig(almocoMinAtual);
+    tickLive();
+  });
+
   $("#confirmModalCancel").addEventListener("click", () => closeConfirm(false));
   $("#confirmModalOk").addEventListener("click", () => closeConfirm(true));
 
@@ -956,12 +1019,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   loadPendingAdjustments();
   showFlexibilizacaoInstant();
   checkForUpdate();
+  loadNomeColaborador();
+  almocoMinAtual = await IcarusAPI.getAlmocoMinConfig();
+  $("#almocoUmaHoraCheck").checked = almocoMinAtual === 60;
   // 3) só então dispara a busca real (assíncrona) que atualiza os dias —
   // em sequência, não em paralelo, pra não disputar a mesma aba do Icarus
   await fetchMonth();
   fetchFlexibilizacao();
+  loadNomeColaborador();
 
-  // "Estimado do período" sobe ao longo do dia — reavalia a cada minuto,
+  // saldo/abono/período sobem ao longo do dia — reavalia a cada minuto,
   // independente do dia selecionado no calendário.
   setInterval(showFlexibilizacaoInstant, 60000);
 });

@@ -30,8 +30,15 @@ const PUNCH_SCHEDULE = [
 // de compartilhado via módulo) porque o service worker roda isolado do
 // painel — se a regra do RH mudar, atualize os dois lugares.
 const JORNADA_PADRAO_MIN = 8 * 60 + 48; // 8:48
-const MIN_ALMOCO_MIN = 30;
 const MINUTOS_ABONO_POR_DIA_UTIL = 48;
+
+// Intervalo de almoço configurável (checkbox no painel) — 30min por padrão.
+// Igual à leitura em api.js (getAlmocoMinConfig), duplicada aqui porque o
+// service worker roda isolado do painel.
+async function getAlmocoMinConfig() {
+  const { almocoMinConfig } = await chrome.storage.local.get({ almocoMinConfig: 30 });
+  return almocoMinConfig;
+}
 
 function easterDate(year) {
   const a = year % 19;
@@ -161,13 +168,13 @@ async function computePredictedPunchTimes() {
     return { 4: Date.now() + remainingMin * 60000 };
   }
 
-  const abonoMin = await abonoMinForTodayBg();
+  const [abonoMin, almocoMin] = await Promise.all([abonoMinForTodayBg(), getAlmocoMinConfig()]);
   const metaMin = Math.max(0, JORNADA_PADRAO_MIN - abonoMin);
   const metadeMin = metaMin / 2;
 
   if (times.length === 1) {
     const saida1 = times[0] + metadeMin * 60000;
-    const entrada2 = saida1 + MIN_ALMOCO_MIN * 60000;
+    const entrada2 = saida1 + almocoMin * 60000;
     const saida2 = entrada2 + metadeMin * 60000;
     return { 2: saida1, 3: entrada2, 4: saida2 };
   }
@@ -175,7 +182,7 @@ async function computePredictedPunchTimes() {
   // times.length === 2
   const manhaMin = (times[1] - times[0]) / 60000;
   const restanteMin = Math.max(0, metaMin - manhaMin);
-  const entrada2 = times[1] + MIN_ALMOCO_MIN * 60000;
+  const entrada2 = times[1] + almocoMin * 60000;
   const saida2 = entrada2 + restanteMin * 60000;
   return { 3: entrada2, 4: saida2 };
 }
@@ -211,6 +218,12 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 chrome.runtime.onStartup.addListener(() => {
   scheduleAllAlarms();
+});
+
+// Mudou o intervalo de almoço no painel (checkbox) — recalcula os
+// lembretes 10min/5min na hora, sem esperar a próxima batida real.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.almocoMinConfig) scheduleDynamicPunchReminders();
 });
 
 // ---------- alarmes (agendamento diário) ----------

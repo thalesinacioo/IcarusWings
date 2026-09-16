@@ -173,6 +173,10 @@ body {
 
 .period-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .period-summary > div { background: var(--bg); border-radius: 9px; padding: 8px; text-align: center; }
+.hs-value.negative { color: var(--red); }
+
+.settings-row { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.settings-row input { width: 16px; height: 16px; }
 
 .primary-btn {
   width: 100%;
@@ -244,7 +248,6 @@ body {
 .pending-cancel { background: none; border: none; color: var(--orange); font-size: 12px; cursor: pointer; padding: 0 0 0 6px; flex-shrink: 0; }
 .pending-cancel:hover { color: var(--red); }
 
-.hours-summary > div.running { outline: 1px solid var(--brand); }
 
 /* painel do dia selecionado (o mesmo card que mostra "hoje" por padrão) */
 .day-panel-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
@@ -357,6 +360,6 @@ body {
 .preview-box { background: var(--bg); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text); }
 .preview-box strong { font-weight: 600; }
 
-.app-footer { text-align: center; padding: 10px 0 14px; font-size: 10.5px; color: var(--muted); }
+.app-footer { text-align: center; padding: 10px 0 14px; font-size: 10.5px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 4px; }
 .app-footer a { color: var(--orange); font-weight: 600; text-decoration: none; }
 .app-footer a:hover { text-decoration: underline; }
