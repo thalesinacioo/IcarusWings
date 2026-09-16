@@ -18,6 +18,14 @@
   <main id="app">
     <section id="statusBox" class="status hidden"></section>
 
+    <section class="card">
+      <button id="baterPontoBtn" class="primary-btn">
+        ◎ Registrar Ponto
+      </button>
+      <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%; margin-top: 8px;">+ Férias / Folgas / Abono</button>
+      <div id="feriasFolgasList" class="ferias-list hidden"></div>
+    </section>
+
     <section class="card" id="calendarCard">
       <div class="calendar-header">
         <button id="prevMonth" class="icon-btn">‹</button>
@@ -42,7 +50,6 @@
         <div class="card-title" id="dayPanelTitle">Batidas de hoje</div>
         <button id="backToTodayBtn" class="link-btn hidden">← Voltar pra hoje</button>
       </div>
-      <div class="tags" id="dayPanelTags"></div>
 
       <div class="punches" id="punchesGrid">
         <div class="punch" data-seq="1"><span class="label">1ª</span><span class="value">--:--</span></div>
@@ -50,12 +57,6 @@
         <div class="punch" data-seq="3"><span class="label">3ª</span><span class="value">--:--</span></div>
         <div class="punch" data-seq="4"><span class="label">4ª</span><span class="value">--:--</span></div>
       </div>
-      <div id="missingPunchAlert" class="missing-alert hidden">
-        <span id="missingPunchText"></span>
-        <button id="missingPunchFillBtn" class="link-btn">Informar horário</button>
-      </div>
-      <div id="dayPanelMotivos" class="motivo-list hidden"></div>
-      <div id="pendingAdjustmentsToday" class="pending-list hidden"></div>
 
       <div class="hours-summary">
         <div><span class="hs-label" id="workedLabel">Trabalhado hoje</span><span id="workedToday" class="hs-value">--:--</span></div>
@@ -63,13 +64,15 @@
         <div><span class="hs-label" id="remainingLabel">Falta trabalhar</span><span id="remainingToday" class="hs-value">--:--</span></div>
       </div>
 
-      <div id="dayPanelNota"></div>
-    </section>
+      <div class="tags" id="dayPanelTags"></div>
+      <div id="missingPunchAlert" class="missing-alert hidden">
+        <span id="missingPunchText"></span>
+        <button id="missingPunchFillBtn" class="link-btn">Informar horário</button>
+      </div>
+      <div id="dayPanelMotivos" class="motivo-list hidden"></div>
+      <div id="pendingAdjustmentsToday" class="pending-list hidden"></div>
 
-    <section class="card">
-      <button id="baterPontoBtn" class="primary-btn">
-        ◎ Registrar Ponto
-      </button>
+      <div id="dayPanelNota"></div>
     </section>
 
     <section class="card">
@@ -83,18 +86,19 @@
     </section>
 
     <section class="card">
-      <div class="card-title">Configurações</div>
-      <label class="settings-row">
-        <input type="checkbox" id="almocoUmaHoraCheck" />
-        Faço intervalo de 1h no almoço
-      </label>
-      <label class="settings-row">
-        <input type="checkbox" id="jornada848Check" />
-        8:48 hoje
-      </label>
-
-      <div id="feriasFolgasList" class="ferias-list hidden"></div>
-      <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%; margin-top: 8px;">+ Férias / Folgas / Abono</button>
+      <button id="configToggle" class="card-title config-toggle" aria-expanded="false">
+        Configurações <span id="configToggleIcon" class="config-toggle-icon">▸</span>
+      </button>
+      <div id="configOptions" class="hidden">
+        <label class="settings-row">
+          <input type="checkbox" id="almocoUmaHoraCheck" />
+          Faço intervalo de 1h no almoço
+        </label>
+        <label class="settings-row">
+          <input type="checkbox" id="jornada848Check" />
+          8:48 hoje
+        </label>
+      </div>
     </section>
 
   </main>

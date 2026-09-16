@@ -1122,6 +1122,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     tickLive();
   });
 
+  $("#configToggle").addEventListener("click", () => {
+    const expanded = $("#configToggle").getAttribute("aria-expanded") === "true";
+    $("#configToggle").setAttribute("aria-expanded", String(!expanded));
+    $("#configOptions").classList.toggle("hidden", expanded);
+    $("#configToggleIcon").textContent = expanded ? "▸" : "▾";
+  });
+
   $("#addFeriasFolgasBtn").addEventListener("click", openFeriasFolgasModal);
   $("#feriasFolgasCancel").addEventListener("click", closeFeriasFolgasModal);
   $("#feriasFolgasSave").addEventListener("click", saveFeriasFolgasModal);
