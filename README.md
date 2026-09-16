@@ -2,6 +2,8 @@
 
 ![Painel Ponto Icarus](docs/screenshot.png)
 
+[Glossário de UI/UX do painel](https://claude.ai/artifact/SgRp8FNLiHYsce8GjiGkHZ?sk=4h8lWiYWX7Ta9_4Qx3gmgQ)
+
 Extensão de Chrome (painel lateral) que te dá uma visão rápida e prática
 do seu ponto no [Ponto Icarus](https://web.pontoicarus.com.br/ponto) —
 calendário do mês, batidas do dia, saldo de horas e lembretes — sem

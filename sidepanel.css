@@ -171,7 +171,7 @@ body {
 .hs-label { display: block; font-size: 10px; color: var(--muted); }
 .hs-value { display: block; font-weight: 700; font-size: 15px; margin-top: 2px; }
 
-.period-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.period-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .period-summary > div { background: var(--bg); border-radius: 9px; padding: 8px; text-align: center; }
 
 .primary-btn {

@@ -207,11 +207,17 @@ function countBusinessDays(start, end) {
   let count = 0;
   const d = new Date(start);
   while (d <= end) {
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6 && !holidays.has(dateKey(d))) count++;
+    if (isBusinessDay(d, holidays)) count++;
     d.setDate(d.getDate() + 1);
   }
   return count;
+}
+
+function isBusinessDay(date, holidaysOfYear) {
+  const dow = date.getDay();
+  if (dow === 0 || dow === 6) return false;
+  const holidays = holidaysOfYear || new Set(nationalHolidaySet(date.getFullYear()));
+  return !holidays.has(dateKey(date));
 }
 
 // Período de apuração corrente (contém a data passada): dia 26 de um mês
@@ -245,6 +251,38 @@ function renderFlexibilizacaoFromCache(start, end, tetoMin) {
   $("#abonoEstimado").textContent = minutesToHHMM(abonoMin);
 }
 
+// Quanto da jornada padrão de hoje (PUNCH_SCHEDULE: 08-12 + 13-17) já devia
+// ter sido cumprido até agora — sobe aos poucos ao longo do dia, para no
+// almoço, e satura em DEFAULT_JORNADA_MIN a partir do horário de saída.
+function expectedMinutesSoFarToday(now) {
+  const toMin = (hh, mm) => hh * 60 + mm;
+  const entrada = toMin(PUNCH_SCHEDULE[0].hh, PUNCH_SCHEDULE[0].mm);
+  const saidaAlmoco = toMin(PUNCH_SCHEDULE[1].hh, PUNCH_SCHEDULE[1].mm);
+  const voltaAlmoco = toMin(PUNCH_SCHEDULE[2].hh, PUNCH_SCHEDULE[2].mm);
+  const saida = toMin(PUNCH_SCHEDULE[3].hh, PUNCH_SCHEDULE[3].mm);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const manha = Math.max(0, Math.min(nowMin, saidaAlmoco) - entrada);
+  const tarde = Math.max(0, Math.min(nowMin, saida) - voltaAlmoco);
+  return manha + tarde;
+}
+
+// Quantas horas já deveriam ter sido trabalhadas no período, até agora
+// (dias úteis anteriores completos × jornada padrão, + o pedaço de hoje já
+// decorrido segundo o horário esperado).
+function estimatedWorkedSoFar(start, end) {
+  const now = new Date();
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  if (today < start) return 0;
+  if (today > end) return countBusinessDays(start, end) * DEFAULT_JORNADA_MIN;
+
+  const ontem = new Date(today);
+  ontem.setDate(ontem.getDate() - 1);
+  let minutos = ontem >= start ? countBusinessDays(start, ontem) * DEFAULT_JORNADA_MIN : 0;
+  if (isBusinessDay(today)) minutos += expectedMinutesSoFarToday(now);
+  return minutos;
+}
+
 // Mostra período/teto/valores na hora com o que já tiver em cache — sem
 // esperar rede, mesmo padrão do resto do painel (nunca abre vazio).
 function showFlexibilizacaoInstant() {
@@ -253,6 +291,7 @@ function showFlexibilizacaoInstant() {
   const tetoMin = diasUteis * MINUTOS_ABONO_POR_DIA_UTIL;
   const fmtDDMM = (d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
   $("#periodoRange").textContent = `${fmtDDMM(start)} – ${fmtDDMM(end)} · ${diasUteis} dias úteis · teto ${minutesToHHMM(tetoMin)}`;
+  $("#periodoEstimadoTotal").textContent = minutesToHHMM(estimatedWorkedSoFar(start, end));
   renderFlexibilizacaoFromCache(start, end, tetoMin);
   return { start, end, tetoMin };
 }
@@ -527,16 +566,27 @@ function renderDayPanel() {
     tickLive();
     liveTimer = setInterval(tickLive, 30000);
   } else {
-    $("#workedToday").textContent = ponto?.tempoNormal || "--:--";
-    $("#remainingToday").textContent = ponto?.tempoFaltando || "--:--";
-    $("#workedToday").parentElement.classList.remove("running");
-    if (ponto) {
-      const diaPendingComHorarioSel = diaPendingMissing.filter((p) => p.approxTime);
-      const mergedTimesSel = mergedPunchesForDay(key, ordenadasVisiveis, diaPendingComHorarioSel).map((item) => item.timeMs);
-      $("#intervalToday").textContent = minutesToHHMM(intervalMinutesFromTimes(mergedTimesSel));
+    const diaPendingComHorarioSel = diaPendingMissing.filter((p) => p.approxTime);
+    const mergedTimesSel = ponto ? mergedPunchesForDay(key, ordenadasVisiveis, diaPendingComHorarioSel).map((item) => item.timeMs) : [];
+    const temOverrideLocal = diaPendingComHorarioSel.length > 0 || diaPendingDelete.length > 0;
+
+    if (ponto && temOverrideLocal && mergedTimesSel.length % 2 === 0) {
+      // não dá pra confiar no total pronto do Icarus aqui: ou falta uma
+      // batida que só existe localmente (digitada, não enviada ainda), ou
+      // sobra uma marcada pra exclusão — recalcula somando os pares reais
+      // visíveis + pendentes, igual o tickLive faz pra hoje.
+      const trabalhadoApiBase = (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) + (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0);
+      const metaMin = trabalhadoApiBase + (ponto.minutoFaltante || 0);
+      let workedLocal = 0;
+      for (let i = 0; i + 1 < mergedTimesSel.length; i += 2) workedLocal += (mergedTimesSel[i + 1] - mergedTimesSel[i]) / 60000;
+      $("#workedToday").textContent = minutesToHHMM(workedLocal);
+      $("#remainingToday").textContent = minutesToHHMM(Math.max(0, metaMin - workedLocal));
     } else {
-      $("#intervalToday").textContent = "--:--";
+      $("#workedToday").textContent = ponto?.tempoNormal || "--:--";
+      $("#remainingToday").textContent = ponto?.tempoFaltando || "--:--";
     }
+    $("#intervalToday").textContent = ponto ? minutesToHHMM(intervalMinutesFromTimes(mergedTimesSel)) : "--:--";
+    $("#workedToday").parentElement.classList.remove("running");
   }
 }
 
@@ -853,4 +903,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   // em sequência, não em paralelo, pra não disputar a mesma aba do Icarus
   await fetchMonth();
   fetchFlexibilizacao();
+
+  // "Estimado do período" sobe ao longo do dia — reavalia a cada minuto,
+  // independente do dia selecionado no calendário.
+  setInterval(showFlexibilizacaoInstant, 60000);
 });
