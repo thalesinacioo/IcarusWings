@@ -297,7 +297,7 @@ body {
 }
 .link-btn:hover { text-decoration: underline; }
 
-.tags { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px; margin-bottom: 8px; }
 .tag { font-size: 10px; padding: 2px 6px; border-radius: 999px; color: #fff; }
 .tag.purple { background: var(--purple); }
 .tag.red { background: var(--red); }
