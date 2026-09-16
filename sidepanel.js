@@ -45,10 +45,15 @@ const GITHUB_REPO = "thalesinacioo/IcarusWings";
 // padrão. Carregado no boot via IcarusAPI.getAlmocoMinConfig().
 let almocoMinAtual = 30;
 
+// "8:48 hoje" — força a meta de hoje pra jornada padrão em vez do que o
+// Icarus calculou (ou 8h de fallback). Carregado no boot.
+let jornada848Ativo = false;
+
 let currentMonth = new Date().getMonth();
 let currentYear = new Date().getFullYear();
 let registrosPorDia = {}; // "YYYY-MM-DD" -> ponto object
 let pendingAdjustments = {}; // "YYYY-MM-DD" -> [{seq,label,clickedAt}]
+let feriasFolgasPeriods = []; // [{id, tipo, inicio, fim, nota}]
 let selectedDayKey = null; // null = mostrando hoje
 let liveTimer = null;
 
@@ -123,6 +128,74 @@ async function loadPendingAdjustments() {
   pendingAdjustments = await IcarusAPI.getPendingAdjustments();
   renderCalendar();
   renderDayPanel();
+}
+
+async function loadFeriasFolgasPeriods() {
+  feriasFolgasPeriods = await IcarusAPI.getFeriasFolgasPeriods();
+  renderFeriasFolgasList();
+  renderCalendar();
+}
+
+function fmtDDMMYYYY(key) {
+  const [y, m, d] = key.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+function renderFeriasFolgasList() {
+  const box = $("#feriasFolgasList");
+  if (!feriasFolgasPeriods.length) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  box.classList.remove("hidden");
+  box.innerHTML = feriasFolgasPeriods
+    .slice()
+    .sort((a, b) => a.inicio.localeCompare(b.inicio))
+    .map((p) => {
+      const periodo = p.inicio === p.fim ? fmtDDMMYYYY(p.inicio) : `${fmtDDMMYYYY(p.inicio)} – ${fmtDDMMYYYY(p.fim)}`;
+      return `<div class="ferias-item">
+        <span class="ferias-item-text">${FERIAS_FOLGAS_LABEL[p.tipo]}, ${periodo}${p.nota ? ", " + p.nota : ""}</span>
+        <button type="button" class="ferias-item-remove" data-id="${p.id}" title="Remover">✕</button>
+      </div>`;
+    })
+    .join("");
+  box.querySelectorAll(".ferias-item-remove").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const ok = await showConfirm("Remove essa marcação do calendário (não afeta o Icarus).", {
+        title: "Remover período",
+        okLabel: "Remover",
+      });
+      if (ok) {
+        await IcarusAPI.removeFeriasFolgasPeriod(btn.dataset.id);
+        loadFeriasFolgasPeriods();
+      }
+    });
+  });
+}
+
+function openFeriasFolgasModal() {
+  $("#feriasFolgasTipo").value = "ferias";
+  const hoje = dateKey(new Date());
+  $("#feriasFolgasInicio").value = hoje;
+  $("#feriasFolgasFim").value = hoje;
+  $("#feriasFolgasNota").value = "";
+  $("#feriasFolgasModal").classList.remove("hidden");
+}
+
+function closeFeriasFolgasModal() {
+  $("#feriasFolgasModal").classList.add("hidden");
+}
+
+async function saveFeriasFolgasModal() {
+  const tipo = $("#feriasFolgasTipo").value;
+  const inicio = $("#feriasFolgasInicio").value;
+  const fim = $("#feriasFolgasFim").value || inicio;
+  const nota = $("#feriasFolgasNota").value.trim();
+  if (!inicio) return;
+  await IcarusAPI.addFeriasFolgasPeriod(tipo, inicio, fim < inicio ? inicio : fim, nota);
+  closeFeriasFolgasModal();
+  loadFeriasFolgasPeriods();
 }
 
 // ---------- carregar mês ----------
@@ -255,21 +328,15 @@ function abonoMinForPeriod(start, end, tetoMin) {
   return saldoTotal < 0 ? Math.min(-saldoTotal, tetoMin) : 0;
 }
 
-// Abono usado pra prever as batidas de HOJE: o abono é um saldo do PERÍODO
-// inteiro (pode chegar ao teto de vários dias somados), mas só é permitido
-// USAR até MINUTOS_ABONO_POR_DIA_UTIL (48min) por dia — descontar o abono
-// acumulado do mês inteiro de um único dia previsto zerava a meta prevista
-// sempre que o saldo do período já estivesse perto do teto.
-// Só dias fechados (até ontem) contam pro saldo: incluir hoje deixaria o
-// saldo artificialmente negativo enquanto o dia ainda está em andamento.
-function abonoMinForToday() {
-  const { start, end } = apuracaoPeriodFor(new Date());
-  const tetoMin = countBusinessDays(start, end) * MINUTOS_ABONO_POR_DIA_UTIL;
+// Abono só dos dias FECHADOS (até ontem) do período. Incluir hoje deixaria o
+// saldo artificialmente negativo enquanto o dia ainda está em andamento
+// (minutoFaltante de hoje aparece quase inteiro com só 1-2 batidas) — usado
+// tanto pelo card "Abono estimado" quanto pela previsão de hoje abaixo.
+function abonoMinFechado(start, end, tetoMin) {
   const ontem = new Date();
   ontem.setDate(ontem.getDate() - 1);
   if (ontem < start) return 0; // hoje é o 1º dia do período, sem dias fechados ainda
-  const abonoPeriodo = abonoMinForPeriod(start, ontem < end ? ontem : end, tetoMin);
-  return Math.min(abonoPeriodo, MINUTOS_ABONO_POR_DIA_UTIL);
+  return abonoMinForPeriod(start, ontem < end ? ontem : end, tetoMin);
 }
 
 function parseHHMMToMinutes(str) {
@@ -322,7 +389,7 @@ function renderFlexibilizacaoFromCache(start, end, tetoMin) {
     }
     d.setDate(d.getDate() + 1);
   }
-  const abonoMin = abonoMinForPeriod(start, end, tetoMin);
+  const abonoMin = abonoMinFechado(start, end, tetoMin);
   $("#periodoWorkedTotal").textContent = minutesToHHMM(workedTotal);
   $("#abonoEstimado").textContent = minutesToHHMM(abonoMin);
 
@@ -413,14 +480,18 @@ async function checkForUpdate() {
 
 // ---------- nome do colaborador (header) ----------
 //
-// Campo confirmado inspecionando a resposta real de
-// buscarTurnoVinculadoColaborador: lastTurno.mutuario.pessoa.nome (nome
-// completo) / .primeiroNome. Se ainda não buscou nenhum turno, mantém
-// "Ponto Icarus" (fallback já escrito no HTML).
+// Fonte principal: GET /mutuario/{id} (lastMutuario.pessoa.nome) — dispara
+// sozinho sempre que a página "Registro de Ponto" carrega, confirmado
+// inspecionando a resposta real (ver background.js MUTUARIO_PATH). Fallback:
+// buscarTurnoVinculadoColaborador (lastTurno.mutuario.pessoa.nome), que só
+// dispara se a pessoa clicar "Detalhar" — por isso não é confiável sozinho
+// (é a causa de o nome não aparecer pra quem nunca clicou lá). Se nenhum dos
+// dois tiver dado ainda, mantém "Ponto Icarus" (fallback já no HTML).
 async function loadNomeColaborador() {
   try {
+    const mutuario = await IcarusAPI.getLastMutuario();
     const turno = await IcarusAPI.getLastTurno();
-    const nome = turno?.mutuario?.pessoa?.nome;
+    const nome = mutuario?.pessoa?.nome || turno?.mutuario?.pessoa?.nome;
     if (nome) $("#appTitle").textContent = nome;
   } catch (err) {
     // sem dado ainda — mantém o fallback "Ponto Icarus"
@@ -485,6 +556,15 @@ function classifyDay(ponto, isToday) {
   return trabalhouAlgo ? "green" : null;
 }
 
+// ---------- férias / folgas / abono (marcação local, informativa) ----------
+
+const FERIAS_FOLGAS_LABEL = { ferias: "Férias", folga: "Folga", abono: "Abono" };
+
+// Comparação lexical de "YYYY-MM-DD" funciona igual comparação de data.
+function feriasFolgaParaDia(key) {
+  return feriasFolgasPeriods.find((p) => key >= p.inicio && key <= p.fim) || null;
+}
+
 function renderCalendar() {
   const first = new Date(currentYear, currentMonth, 1);
   const last = new Date(currentYear, currentMonth + 1, 0);
@@ -498,11 +578,16 @@ function renderCalendar() {
     grid.appendChild(empty);
   }
   const todayKey = dateKey(new Date());
+  const holidays = new Set(nationalHolidaySet(currentYear));
   for (let day = 1; day <= last.getDate(); day++) {
     const d = new Date(currentYear, currentMonth, day);
     const key = dateKey(d);
     const ponto = registrosPorDia[key];
-    const cls = classifyDay(ponto, key === todayKey);
+    const ferias = feriasFolgaParaDia(key);
+    // Prioridade: classificação real do Icarus (roxo/vermelho/verde) primeiro;
+    // depois férias/folga/abono programado (rosa); feriado é o "chão", só
+    // aparece cinza quando não tem nenhuma classificação mais importante.
+    const cls = classifyDay(ponto, key === todayKey) || (ferias ? "ferias" : null) || (holidays.has(key) ? "holiday" : null);
     const hasPending = (pendingAdjustments[key] || []).length > 0;
     const isSelected = selectedDayKey ? key === selectedDayKey : key === todayKey;
     const cell = document.createElement("div");
@@ -510,6 +595,8 @@ function renderCalendar() {
     cell.innerHTML = `<span class="chip">${day}</span>`;
     if (ponto) {
       cell.title = `Normal ${ponto.tempoNormal || "--"} · Falta ${ponto.tempoFaltando || "--"} · Saldo ${ponto.tempoSaldo || "--"}`;
+    } else if (ferias) {
+      cell.title = `${FERIAS_FOLGAS_LABEL[ferias.tipo]}${ferias.nota ? ": " + ferias.nota : ""}`;
     }
     cell.classList.add("clickable");
     cell.addEventListener("click", () => selectDay(d));
@@ -580,13 +667,18 @@ function renderDayPanel() {
       el.onclick = () => markPunchPendingDeletion(key, seq, b);
     } else if (item?.pending) {
       const pend = item.pending;
-      const label = pend.label || PUNCH_SCHEDULE.find((s) => s.seq === pend.seq)?.label || `${seq}ª batida`;
+      // O rótulo (1ª entrada / 1ª saída / ...) é sempre o da posição ATUAL
+      // na ordem cronológica — não o que foi gravado quando a pessoa
+      // informou o horário. A posição pode mudar depois (ex: cancelar uma
+      // exclusão pendente de outra batida empurra este ajuste pra outro
+      // lugar), e o rótulo salvo (pend.label) ficaria desatualizado.
+      const label = PUNCH_SCHEDULE.find((s) => s.seq === seq)?.label || pend.label || `${seq}ª batida`;
       const shown = pend.approxTime || hhmm(pend.clickedAt);
       valueEl.textContent = `~${shown}`;
       el.classList.add("pending", "fillable");
       el.title = pend.approxTime
-        ? `Horário aproximado informado: ${pend.approxTime} — ainda não registrado no Icarus. Clique pra editar.`
-        : `Marcado como "ajustar depois" às ${hhmm(pend.clickedAt)} — ainda não registrado no Icarus. Clique pra informar o horário.`;
+        ? `Ajuste manual: ${pend.approxTime}, ainda não registrado no Icarus. Clique pra editar.`
+        : `Marcado como "ajustar depois" às ${hhmm(pend.clickedAt)}, ainda não registrado no Icarus. Clique pra informar o horário.`;
       el.onclick = () => openPunchTimeModal(key, pend.seq, label, pend.approxTime);
     } else {
       const label = PUNCH_SCHEDULE.find((s) => s.seq === seq)?.label || `${seq}ª batida`;
@@ -628,13 +720,32 @@ function renderDayPanel() {
             <button type="button" class="pending-cancel" data-horario="${p.horarioMs}" title="Cancelar exclusão pendente">✕</button>
           </div>`;
         }
-        return p.approxTime
-          ? `<div class="pending-item"><span class="dot orange"></span>${p.label} — horário aproximado informado: ${p.approxTime}, falta registrar no Icarus.</div>`
-          : `<div class="pending-item"><span class="dot orange"></span>${p.label} — clicado em "ajustar depois" às ${hhmm(p.clickedAt)}, falta registrar no Icarus.</div>`;
+        // Mesmo motivo do rótulo nos cartões: usa a posição cronológica
+        // ATUAL (onde esse ajuste caiu no merge com as outras batidas), não
+        // o rótulo salvo em p.label — que fica desatualizado se outra
+        // batida do dia mudar depois (ex: cancelar uma exclusão pendente).
+        const posAtual = merged.findIndex((item) => item.pending === p) + 1;
+        const label = (posAtual > 0 && PUNCH_SCHEDULE.find((s) => s.seq === posAtual)?.label) || p.label;
+        const texto = p.approxTime
+          ? `${label}, ajuste manual ${p.approxTime}, falta registrar no Icarus.`
+          : `${label}, clicado em "ajustar depois" às ${hhmm(p.clickedAt)}, falta registrar no Icarus.`;
+        return `<div class="pending-item">
+          <label class="pending-check-label">
+            <input type="checkbox" class="pending-adjust-check" data-seq="${p.seq}" ${p.done ? "checked" : ""} />
+            <span class="pending-text${p.done ? " struck" : ""}">${texto}</span>
+          </label>
+        </div>`;
       })
       .join("");
     pendingBox.querySelectorAll(".pending-check").forEach((cb) => {
       cb.addEventListener("change", () => IcarusAPI.setPendingDeletionDone(key, Number(cb.dataset.horario), cb.checked));
+    });
+    // "já ajustei no Icarus" — marca só localmente (mesma ideia do check de
+    // exclusão pendente). Se a busca seguinte já mostrar o Icarus cobrindo
+    // esse horário, reconcilePendingAdjustments (background.js) marca
+    // sozinho, sem precisar você clicar.
+    pendingBox.querySelectorAll(".pending-adjust-check").forEach((cb) => {
+      cb.addEventListener("change", () => IcarusAPI.setPendingAdjustmentDone(key, Number(cb.dataset.seq), cb.checked));
     });
     pendingBox.querySelectorAll(".pending-cancel").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -718,7 +829,7 @@ async function markPunchPendingDeletion(key, seq, batida) {
   const ok = await showConfirm(
     `Marcar a batida das ${horario} (${label}) como pendente de exclusão?\n\n` +
     "Ela some do cartão de batidas (como se já tivesse sido excluída de verdade) e passa a aparecer só na lista " +
-    "de ajustes pendentes. Isso não mexe no Icarus — solicite a exclusão de verdade no site; dá pra cancelar o " +
+    "de ajustes pendentes. Isso não mexe no Icarus, solicite a exclusão de verdade no site; dá pra cancelar o " +
     "lembrete por lá se você errar a mão.",
     { title: "Pendente de exclusão", okLabel: "Marcar" }
   );
@@ -778,7 +889,12 @@ function computeTotalsForDayPreview(key, seq, inputTimeStr) {
       (ponto.minutoExtraTP2 || 0) +
       (ponto.minutoExtraTP3 || 0)
     : 0;
-  const metaMin = ponto ? trabalhadoApiBase + (ponto.minutoFaltante || 0) : DEFAULT_JORNADA_MIN;
+  // Hoje sempre usa meta fixa (8:00, ou 8:48 com o checkbox), sem depender
+  // do que o Icarus calculou pro dia. Outro dia (não-hoje) continua usando
+  // a meta real do Icarus, que já fechou e é autoritativa.
+  const metaMin = isToday
+    ? (jornada848Ativo ? JORNADA_PADRAO_MIN : DEFAULT_JORNADA_MIN)
+    : ponto ? trabalhadoApiBase + (ponto.minutoFaltante || 0) : DEFAULT_JORNADA_MIN;
 
   return { worked: workedMin, remaining: Math.max(0, metaMin - workedMin) };
 }
@@ -825,7 +941,7 @@ async function savePunchTimeModal() {
   const { dateKey: dk, seq, label } = punchTimeModalCtx;
   await IcarusAPI.setPendingAdjustmentTime(dk, seq, label, value);
   closePunchTimeModal();
-  showStatus(`Horário aproximado salvo para "${label}" — lembre de ajustar de verdade no Icarus.`, "info");
+  showStatus(`Ajuste manual salvo para "${label}", lembre de ajustar de verdade no Icarus.`, "info");
   // storage.onChanged já dispara icarus:pendingAdjustmentsChanged, que recarrega
 }
 
@@ -873,10 +989,9 @@ function tickLive() {
       (ponto.minutoExtraTP2 || 0) +
       (ponto.minutoExtraTP3 || 0)
     : 0;
-  // sem ponto (Icarus ainda não tem nenhum registro do dia) não dá pra saber
-  // a meta real, então usa a jornada padrão só pra não deixar "Falta
-  // trabalhar" vazio.
-  const metaMin = ponto ? trabalhadoApiBase + (ponto.minutoFaltante || 0) : DEFAULT_JORNADA_MIN;
+  // Meta de hoje é sempre fixa (8:00, ou 8:48 com "8:48 hoje" marcado) —
+  // nunca depende do que o Icarus calculou pro dia, pra ficar previsível.
+  const metaMin = jornada848Ativo ? JORNADA_PADRAO_MIN : DEFAULT_JORNADA_MIN;
 
   // sequência cronológica só dos instantes (reais visíveis + pendentes com
   // horário) — usada pro intervalo sempre (o Icarus não expõe esse número)
@@ -906,9 +1021,9 @@ function tickLive() {
   remainingEl.textContent = minutesToHHMM(remainingMin);
 
   // previsão das batidas restantes — estimativa a partir da 1ª batida real
-  // (jornada padrão 8:48 menos o abono do período, dividida em duas metades
-  // com o mínimo de 30min de almoço no meio); nunca é uma batida, só some
-  // assim que a batida real (ou uma pendente) ocupar o slot.
+  // (meta fixa de hoje, 8:00 ou 8:48 com o checkbox, dividida em duas
+  // metades com o mínimo de almoço configurado no meio); nunca é uma
+  // batida, só some assim que a batida real (ou uma pendente) ocupar o slot.
   const applyPredictedPunch = (el, timeMs, title) => {
     if (!el || !el.classList.contains("fillable")) return;
     el.classList.add("predicted");
@@ -917,9 +1032,12 @@ function tickLive() {
   };
   [punch2, punch3, punch4].forEach((el) => el?.classList.remove("predicted"));
 
+  // Base da meta usada nas previsões abaixo: 8:48 menos o abono do período,
+  // ou 8:48 "seco" (sem descontar abono) quando "8:48 hoje" está marcado.
+  const metaMinPrevisao = jornada848Ativo ? JORNADA_PADRAO_MIN : DEFAULT_JORNADA_MIN;
+
   if (mergedTimes.length === 1) {
-    const metaMin = Math.max(0, JORNADA_PADRAO_MIN - abonoMinForToday());
-    const metadeMin = metaMin / 2;
+    const metadeMin = metaMinPrevisao / 2;
     const saida1Pred = mergedTimes[0] + metadeMin * 60000;
     const entrada2Pred = saida1Pred + almocoMinAtual * 60000;
     const saida2Pred = entrada2Pred + metadeMin * 60000;
@@ -927,7 +1045,7 @@ function tickLive() {
     applyPredictedPunch(punch3, entrada2Pred, "Previsão de volta do almoço (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
     applyPredictedPunch(punch4, saida2Pred, "Previsão de saída (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
   } else if (mergedTimes.length === 2) {
-    const metaMin = Math.max(0, JORNADA_PADRAO_MIN - abonoMinForToday());
+    const metaMin = metaMinPrevisao;
     const manhaMin = (mergedTimes[1] - mergedTimes[0]) / 60000;
     const restanteMin = Math.max(0, metaMin - manhaMin);
     const entrada2Pred = mergedTimes[1] + almocoMinAtual * 60000;
@@ -998,6 +1116,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     tickLive();
   });
 
+  $("#jornada848Check").addEventListener("change", async (ev) => {
+    jornada848Ativo = ev.target.checked;
+    await IcarusAPI.setJornada848Config(jornada848Ativo);
+    tickLive();
+  });
+
+  $("#addFeriasFolgasBtn").addEventListener("click", openFeriasFolgasModal);
+  $("#feriasFolgasCancel").addEventListener("click", closeFeriasFolgasModal);
+  $("#feriasFolgasSave").addEventListener("click", saveFeriasFolgasModal);
+
   $("#confirmModalCancel").addEventListener("click", () => closeConfirm(false));
   $("#confirmModalOk").addEventListener("click", () => closeConfirm(true));
 
@@ -1017,11 +1145,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderCalendar();
   renderDayPanel();
   loadPendingAdjustments();
+  loadFeriasFolgasPeriods();
   showFlexibilizacaoInstant();
   checkForUpdate();
   loadNomeColaborador();
   almocoMinAtual = await IcarusAPI.getAlmocoMinConfig();
   $("#almocoUmaHoraCheck").checked = almocoMinAtual === 60;
+  jornada848Ativo = await IcarusAPI.getJornada848Config();
+  $("#jornada848Check").checked = jornada848Ativo;
+  tickLive();
   // 3) só então dispara a busca real (assíncrona) que atualiza os dias —
   // em sequência, não em paralelo, pra não disputar a mesma aba do Icarus
   await fetchMonth();

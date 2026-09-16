@@ -70,6 +70,11 @@ const IcarusAPI = {
     return lastTurno || null;
   },
 
+  async getLastMutuario() {
+    const { lastMutuario } = await chrome.storage.local.get("lastMutuario");
+    return lastMutuario || null;
+  },
+
   // Intervalo mínimo de almoço usado só na previsão (~) das batidas — 30 ou
   // 60min. Não altera nada no Icarus, é só um parâmetro do cálculo local.
   async getAlmocoMinConfig() {
@@ -78,6 +83,17 @@ const IcarusAPI = {
   },
   async setAlmocoMinConfig(min) {
     await chrome.storage.local.set({ almocoMinConfig: min });
+  },
+
+  // "8:48 hoje" — força a meta do dia atual pra jornada padrão (8:48) em vez
+  // do que o Icarus calculou pro dia (ou 8h de fallback). Só afeta a tela,
+  // não manda nada pro Icarus.
+  async getJornada848Config() {
+    const { jornada848Config } = await chrome.storage.local.get({ jornada848Config: false });
+    return jornada848Config;
+  },
+  async setJornada848Config(ativo) {
+    await chrome.storage.local.set({ jornada848Config: ativo });
   },
 
   // Preenche o período na tela real e clica em "Pesquisar" — os dados
@@ -155,6 +171,22 @@ const IcarusAPI = {
     await chrome.storage.local.set({ pendingAdjustments });
   },
 
+  // Liga/desliga o checkbox "já ajustei no Icarus" de um horário informado
+  // manualmente (ajuste que ainda não foi excluído/incluído de verdade lá).
+  // Igual à exclusão pendente, só risca o texto, não tira da lista — quem
+  // tira é reconcilePendingAdjustments (background.js) quando o Icarus
+  // passa a mostrar batidas reais suficientes pra cobrir esse horário
+  // (nesse caso ele já marca `done` sozinho, sem precisar clicar aqui).
+  async setPendingAdjustmentDone(dateKeyStr, seq, done) {
+    const { pendingAdjustments = {} } = await chrome.storage.local.get({ pendingAdjustments: {} });
+    const dayList = pendingAdjustments[dateKeyStr] || [];
+    const entry = dayList.find((p) => p.type !== "delete" && p.seq === seq);
+    if (!entry) return;
+    entry.done = done;
+    pendingAdjustments[dateKeyStr] = dayList;
+    await chrome.storage.local.set({ pendingAdjustments });
+  },
+
   // Cancela de vez o lembrete de exclusão pendente — a batida volta a
   // aparecer normalmente no cartão de batidas.
   async resolvePendingDeletion(dateKeyStr, horarioMs) {
@@ -163,6 +195,25 @@ const IcarusAPI = {
     if (dayList.length) pendingAdjustments[dateKeyStr] = dayList;
     else delete pendingAdjustments[dateKeyStr];
     await chrome.storage.local.set({ pendingAdjustments });
+  },
+
+  // Períodos de férias/folga/abono informados manualmente — só pra marcar
+  // o calendário (rosa), não manda nada pro Icarus.
+  // [{ id, tipo: "ferias"|"folga"|"abono", inicio: "YYYY-MM-DD", fim: "YYYY-MM-DD", nota? }]
+  async getFeriasFolgasPeriods() {
+    const { feriasFolgasPeriods } = await chrome.storage.local.get({ feriasFolgasPeriods: [] });
+    return feriasFolgasPeriods;
+  },
+  async addFeriasFolgasPeriod(tipo, inicio, fim, nota) {
+    const { feriasFolgasPeriods = [] } = await chrome.storage.local.get({ feriasFolgasPeriods: [] });
+    const id = `ff_${Date.now()}`;
+    feriasFolgasPeriods.push({ id, tipo, inicio, fim, nota: nota || "" });
+    await chrome.storage.local.set({ feriasFolgasPeriods });
+    return id;
+  },
+  async removeFeriasFolgasPeriod(id) {
+    const { feriasFolgasPeriods = [] } = await chrome.storage.local.get({ feriasFolgasPeriods: [] });
+    await chrome.storage.local.set({ feriasFolgasPeriods: feriasFolgasPeriods.filter((p) => p.id !== id) });
   },
 };
 

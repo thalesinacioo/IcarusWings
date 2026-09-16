@@ -32,6 +32,8 @@
         <span><i class="dot red"></i> Erro/Falta</span>
         <span><i class="dot purple"></i> Ajuste manual</span>
         <span><i class="dot orange"></i> Ajuste pendente</span>
+        <span><i class="dot gray"></i> Feriado</span>
+        <span><i class="dot pink"></i> Férias/Folgas programadas</span>
       </div>
     </section>
 
@@ -86,6 +88,13 @@
         <input type="checkbox" id="almocoUmaHoraCheck" />
         Faço intervalo de 1h no almoço
       </label>
+      <label class="settings-row">
+        <input type="checkbox" id="jornada848Check" />
+        8:48 hoje
+      </label>
+
+      <div id="feriasFolgasList" class="ferias-list hidden"></div>
+      <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%; margin-top: 8px;">+ Férias / Folgas / Abono</button>
     </section>
 
   </main>
@@ -96,10 +105,10 @@
 
   <div id="punchTimeModal" class="modal hidden">
     <div class="modal-box">
-      <div class="modal-title">Horário aproximado — <span id="punchTimeModalLabel"></span></div>
+      <div class="modal-title">Ajuste manual, <span id="punchTimeModalLabel"></span></div>
       <p class="hint" style="margin-top:0">
-        Essa batida não foi registrada no Icarus. Informe a que horas ela aconteceu (aproximadamente) —
-        fica marcada em laranja no painel até você ajustar de verdade no Icarus.
+        Essa batida não foi registrada no Icarus. Informe a que horas ela aconteceu (aproximadamente), fica
+        marcada em laranja no painel até você ajustar de verdade no Icarus.
       </p>
       <div style="display: flex; gap: 6px; align-items: center;">
         <input type="time" id="punchTimeModalInput" class="time-input" style="flex: 1; margin-top: 0;" />
@@ -112,6 +121,37 @@
       <div class="modal-actions">
         <button id="punchTimeModalCancel" class="secondary-btn">Cancelar</button>
         <button id="punchTimeModalSave" class="primary-btn">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="feriasFolgasModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-title">Férias / Folgas / Abono</div>
+      <p class="hint" style="margin-top:0">
+        Marca o período no calendário (rosa), só pra você visualizar, não manda nada pro Icarus.
+      </p>
+      <label class="hint" style="display:block; margin-top: 10px;">Tipo</label>
+      <select id="feriasFolgasTipo" class="time-input">
+        <option value="ferias">Férias</option>
+        <option value="folga">Folga</option>
+        <option value="abono">Abono</option>
+      </select>
+      <div class="ferias-row">
+        <div>
+          <label class="hint" style="display:block;">Início</label>
+          <input type="date" id="feriasFolgasInicio" class="time-input" />
+        </div>
+        <div>
+          <label class="hint" style="display:block;">Fim</label>
+          <input type="date" id="feriasFolgasFim" class="time-input" />
+        </div>
+      </div>
+      <label class="hint" style="display:block; margin-top: 8px;">Nota (opcional)</label>
+      <input type="text" id="feriasFolgasNota" class="time-input" placeholder="Ex: viagem, folga combinada com o gestor..." />
+      <div class="modal-actions">
+        <button id="feriasFolgasCancel" class="secondary-btn">Cancelar</button>
+        <button id="feriasFolgasSave" class="primary-btn">Salvar</button>
       </div>
     </div>
   </div>

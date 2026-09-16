@@ -10,6 +10,10 @@ const MSG_NS = "__pontoIcarusExt__";
 const ICARUS_URL_PATTERN = "https://web.pontoicarus.com.br/*";
 const CONSULTAR_REGISTROS_PATH = "/ponto/consultarRegistrosPonto";
 const TURNO_PATH = "/colaboradorTurno/buscarTurnoVinculadoColaborador";
+// Dispara sozinho sempre que a página "Registro de Ponto" carrega (ao
+// contrário de TURNO_PATH, que só dispara se a pessoa clicar "Detalhar") —
+// é a fonte confiável do nome do colaborador (pessoa.nome).
+const MUTUARIO_PATH = "/mutuario/";
 
 // Rótulos das 4 batidas esperadas do dia (mesma numeração do painel). Só a
 // 1ª tem horário fixo de checagem (7:30, recorrente) — as outras 3 são
@@ -24,13 +28,12 @@ const PUNCH_SCHEDULE = [
 ];
 
 // ---------- previsão dos horários restantes do dia ----------
-// Mesma regra do sidepanel.js (renderFlexibilizacaoFromCache / tickLive):
-// jornada padrão 8:48 menos o abono do período corrente, dividida em duas
-// metades com o mínimo de 30min de almoço no meio. Duplicado aqui (em vez
-// de compartilhado via módulo) porque o service worker roda isolado do
-// painel — se a regra do RH mudar, atualize os dois lugares.
+// A meta de hoje é sempre fixa — 8:00, ou 8:48 com "8:48 hoje" marcado no
+// painel — nunca depende do que o Icarus calculou pro dia (ver
+// computePredictedPunchTimes abaixo). Duplicado aqui (em vez de
+// compartilhado via módulo) porque o service worker roda isolado do painel.
+const DEFAULT_JORNADA_MIN = 8 * 60; // 8:00
 const JORNADA_PADRAO_MIN = 8 * 60 + 48; // 8:48
-const MINUTOS_ABONO_POR_DIA_UTIL = 48;
 
 // Intervalo de almoço configurável (checkbox no painel) — 30min por padrão.
 // Igual à leitura em api.js (getAlmocoMinConfig), duplicada aqui porque o
@@ -40,105 +43,11 @@ async function getAlmocoMinConfig() {
   return almocoMinConfig;
 }
 
-function easterDate(year) {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31);
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(year, month - 1, day);
-}
-
-function nationalHolidaySet(year) {
-  const easter = easterDate(year);
-  const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
-  return [
-    new Date(year, 0, 1),
-    addDays(easter, -48),
-    addDays(easter, -47),
-    addDays(easter, -2),
-    addDays(easter, 60),
-    new Date(year, 3, 21),
-    new Date(year, 4, 1),
-    new Date(year, 8, 7),
-    new Date(year, 9, 12),
-    new Date(year, 10, 2),
-    new Date(year, 10, 15),
-    new Date(year, 10, 20),
-    new Date(year, 11, 25),
-  ].map((d) => dateKeyOf(d));
-}
-
-function isBusinessDay(date, holidaysOfYear) {
-  const dow = date.getDay();
-  if (dow === 0 || dow === 6) return false;
-  const holidays = holidaysOfYear || new Set(nationalHolidaySet(date.getFullYear()));
-  return !holidays.has(dateKeyOf(date));
-}
-
-function countBusinessDays(start, end) {
-  const holidays = new Set();
-  for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
-    nationalHolidaySet(y).forEach((k) => holidays.add(k));
-  }
-  let count = 0;
-  const d = new Date(start);
-  while (d <= end) {
-    if (isBusinessDay(d, holidays)) count++;
-    d.setDate(d.getDate() + 1);
-  }
-  return count;
-}
-
-function apuracaoPeriodFor(date) {
-  const inicioNoMesAtual = date.getDate() >= 26;
-  const start = inicioNoMesAtual
-    ? new Date(date.getFullYear(), date.getMonth(), 26)
-    : new Date(date.getFullYear(), date.getMonth() - 1, 26);
-  const end = inicioNoMesAtual
-    ? new Date(date.getFullYear(), date.getMonth() + 1, 25)
-    : new Date(date.getFullYear(), date.getMonth(), 25);
-  return { start, end };
-}
-
-// Best-effort: só enxerga o abono dos dias que o painel já buscou nesta
-// sessão (cachedRegistrosPorDia, escrito pelo sidepanel.js). Se o período
-// nunca foi consultado, abono sai 0 — subestima a previsão, não superestima.
-// Só conta dias FECHADOS (até ontem): incluir hoje inflaria o saldo negativo
-// enquanto o dia ainda está em andamento (minutoFaltante de hoje aparece
-// quase inteiro com só 1-2 batidas), zerando a meta prevista.
-// O abono é um saldo do PERÍODO inteiro (pode acumular vários dias), mas só
-// é permitido USAR até MINUTOS_ABONO_POR_DIA_UTIL (48min) por dia — por
-// isso o retorno é limitado a esse teto diário, não ao saldo do período.
-async function abonoMinForTodayBg() {
-  const { cachedRegistrosPorDia = {} } = await chrome.storage.local.get("cachedRegistrosPorDia");
-  const { start, end: periodEnd } = apuracaoPeriodFor(new Date());
-  const tetoMin = countBusinessDays(start, periodEnd) * MINUTOS_ABONO_POR_DIA_UTIL;
-  const ontem = new Date();
-  ontem.setDate(ontem.getDate() - 1);
-  if (ontem < start) return 0;
-  const end = ontem < periodEnd ? ontem : periodEnd;
-  let saldoTotal = 0;
-  const d = new Date(start);
-  while (d <= end) {
-    const ponto = cachedRegistrosPorDia[dateKeyOf(d)];
-    if (ponto) {
-      const extra = (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0);
-      saldoTotal += extra - (ponto.minutoFaltante || 0);
-    }
-    d.setDate(d.getDate() + 1);
-  }
-  const abonoPeriodo = saldoTotal < 0 ? Math.min(-saldoTotal, tetoMin) : 0;
-  return Math.min(abonoPeriodo, MINUTOS_ABONO_POR_DIA_UTIL);
+// "8:48 hoje" (checkbox no painel) — igual à leitura em api.js
+// (getJornada848Config), duplicada aqui pelo mesmo motivo acima.
+async function getJornada848Config() {
+  const { jornada848Config } = await chrome.storage.local.get({ jornada848Config: false });
+  return jornada848Config;
 }
 
 async function getTodayPonto() {
@@ -160,16 +69,25 @@ async function computePredictedPunchTimes() {
   const times = await getTodayPunchTimesMs();
   if (times.length === 0 || times.length >= 4) return null;
 
+  // Meta de hoje é sempre fixa (8:00, ou 8:48 com "8:48 hoje" marcado) —
+  // nunca depende do que o Icarus calculou pro dia, pra ficar previsível
+  // (mesma regra do sidepanel.js).
+  const [jornada848, almocoMin] = await Promise.all([getJornada848Config(), getAlmocoMinConfig()]);
+  const metaMin = jornada848 ? JORNADA_PADRAO_MIN : DEFAULT_JORNADA_MIN;
+
   if (times.length === 3) {
-    // 4ª batida: usa o "falta trabalhar" do próprio Icarus (já reflete
-    // ajuste/abono real do dia, mais preciso que a nossa estimativa).
     const ponto = await getTodayPonto();
-    const remainingMin = ponto?.minutoFaltante || 0;
+    const trabalhadoFechado = ponto
+      ? (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) +
+        (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0)
+      : 0;
+    // 3 batidas = turno em aberto desde a última — soma o tempo já corrido
+    // dela, senão a previsão ignora o que já foi trabalhado desde então.
+    const decorridoAbertoMin = (Date.now() - times[2]) / 60000;
+    const remainingMin = Math.max(0, metaMin - trabalhadoFechado - decorridoAbertoMin);
     return { 4: Date.now() + remainingMin * 60000 };
   }
 
-  const [abonoMin, almocoMin] = await Promise.all([abonoMinForTodayBg(), getAlmocoMinConfig()]);
-  const metaMin = Math.max(0, JORNADA_PADRAO_MIN - abonoMin);
   const metadeMin = metaMin / 2;
 
   if (times.length === 1) {
@@ -220,10 +138,10 @@ chrome.runtime.onStartup.addListener(() => {
   scheduleAllAlarms();
 });
 
-// Mudou o intervalo de almoço no painel (checkbox) — recalcula os
-// lembretes 10min/5min na hora, sem esperar a próxima batida real.
+// Mudou o intervalo de almoço ou o "8:48 hoje" no painel (checkbox) —
+// recalcula os lembretes 10min/5min na hora, sem esperar a próxima batida real.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.almocoMinConfig) scheduleDynamicPunchReminders();
+  if (area === "local" && (changes.almocoMinConfig || changes.jornada848Config)) scheduleDynamicPunchReminders();
 });
 
 // ---------- alarmes (agendamento diário) ----------
@@ -459,21 +377,40 @@ async function reconcilePendingAdjustments(registrosData) {
   for (const p of registrosData.pontos) {
     const key = dateKeyOf(new Date(p.dataBatida));
     if (!pending[key]) continue;
-    const punchCount = (p.pontosHorariosBatidasOrdenados || []).length;
     const horariosReais = new Set((p.pontosHorariosBatidasOrdenados || []).map((b) => b.horario));
+    // BUG corrigido: usava o total bruto de batidas reais do Icarus pra
+    // decidir se um horário aproximado informado (não-delete) já estava
+    // "coberto" — mas isso ignora batidas marcadas localmente como pendente
+    // de exclusão, que ainda contam nesse total (o Icarus só some com elas
+    // quando o gestor aprova de verdade). Resultado: informar um horário
+    // aproximado pra um slot esvaziado por uma exclusão pendente apagava
+    // esse mesmo horário na hora, porque punchCount (bruto) já cobria o seq.
+    // Agora desconta as exclusões pendentes ainda presentes no Icarus, pra
+    // contar só as batidas que a pessoa realmente vê no cartão.
+    const pendingDeleteAindaReais = pending[key].filter((e) => e.type === "delete" && horariosReais.has(e.horarioMs)).length;
+    const punchCountVisivel = (p.pontosHorariosBatidasOrdenados || []).length - pendingDeleteAindaReais;
     // "delete" nunca reconcilia por contagem (a batida já existe, então
     // punchCount>=seq seria sempre verdade e apagaria o lembrete na hora).
     // Só some quando o horário exato dela some de vez do Icarus — sinal de
     // que o gestor aprovou a exclusão de verdade — não quando a pessoa
     // marca o checkbox (isso só risca o texto, ver setPendingDeletionDone).
-    const filtered = pending[key].filter((entry) =>
-      entry.type === "delete" ? horariosReais.has(entry.horarioMs) : entry.seq > punchCount
-    );
+    // "delete" some da lista quando o horário aprova de verdade (acima). Já
+    // o horário informado manualmente (não-delete) nunca some sozinho — só
+    // marca "done" (mesmo checkbox que a pessoa também pode marcar na mão)
+    // assim que o Icarus passa a ter batidas suficientes cobrindo o slot;
+    // fica registrado na lista, riscado, até ela mesma cancelar/remover.
+    const filtered = pending[key].filter((entry) => entry.type === "delete" ? horariosReais.has(entry.horarioMs) : true);
     if (filtered.length !== pending[key].length) {
       changed = true;
-      if (filtered.length) pending[key] = filtered;
-      else delete pending[key];
     }
+    for (const entry of filtered) {
+      if (entry.type !== "delete" && entry.seq <= punchCountVisivel && !entry.done) {
+        entry.done = true;
+        changed = true;
+      }
+    }
+    if (filtered.length) pending[key] = filtered;
+    else delete pending[key];
   }
   if (changed) await setPendingAdjustments(pending);
 }
@@ -492,6 +429,9 @@ chrome.runtime.onMessage.addListener((msg) => {
     }
     if (url && url.includes(TURNO_PATH) && msg.payload.data) {
       chrome.storage.local.set({ lastTurno: msg.payload.data, lastTurnoAt: Date.now() });
+    }
+    if (url && url.includes(MUTUARIO_PATH) && msg.payload.data) {
+      chrome.storage.local.set({ lastMutuario: msg.payload.data, lastMutuarioAt: Date.now() });
     }
 
     chrome.storage.local.get({ endpointLog: [] }, ({ endpointLog }) => {

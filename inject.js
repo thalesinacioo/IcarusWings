@@ -193,7 +193,7 @@ async function uiBaterPonto() {
     interval: 200,
   });
   if (!sucesso) {
-    throw new Error("Confirmei a batida mas não vi a mensagem de sucesso — confira manualmente na aba do Icarus.");
+    throw new Error("Confirmei a batida mas não vi a mensagem de sucesso, confira manualmente na aba do Icarus.");
   }
 
   return { ok: true };
@@ -282,7 +282,7 @@ async function uiRemoverBatida({ dataDDMMYYYY, horarioHHMM, justificativa }) {
     },
     { timeout: 5000, interval: 200 }
   );
-  if (!resultado) throw new Error("Enviei o ajuste mas não consegui confirmar — confira em Minhas Solicitações.");
+  if (!resultado) throw new Error("Enviei o ajuste mas não consegui confirmar, confira em Minhas Solicitações.");
   if (resultado.erro === "par") {
     throw new Error(
       "O Icarus não deixa remover só essa batida: a quantidade de registros do dia precisa ficar par. Remova em pares, ou edite o horário em vez de excluir."
