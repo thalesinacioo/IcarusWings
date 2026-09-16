@@ -38,6 +38,8 @@ const PUNCH_SCHEDULE = [
 const MISSING_PUNCH_GRACE_MIN = 60; // só avisa depois de 1h do horário esperado
 const DEFAULT_JORNADA_MIN = 8 * 60; // meta do dia (08-12 + 13-17) quando o Icarus ainda não tem registro nenhum pro dia
 const MINUTOS_ABONO_POR_DIA_UTIL = 48; // regra do RH: teto de flexibilização = dias úteis do período × 48min
+const JORNADA_PADRAO_MIN = 8 * 60 + 48; // 8:48 — jornada padrão usada como base pra prever as batidas restantes do dia
+const MIN_ALMOCO_MIN = 30; // menor intervalo de almoço aceito, usado pra prever a volta do almoço
 const GITHUB_REPO = "thalesinacioo/IcarusWings";
 
 let currentMonth = new Date().getMonth();
@@ -233,20 +235,52 @@ function apuracaoPeriodFor(date) {
   return { start, end };
 }
 
-function renderFlexibilizacaoFromCache(start, end, tetoMin) {
-  let workedTotal = 0;
+// saldoTotal = créditos - débitos do período; abono é esse saldo quando
+// negativo (limitado ao teto). Extraído à parte pra poder ser reaproveitado
+// pela previsão das batidas de hoje (JORNADA_PADRAO_MIN - abono).
+function abonoMinForPeriod(start, end, tetoMin) {
   let saldoTotal = 0;
   const d = new Date(start);
   while (d <= end) {
     const ponto = registrosPorDia[dateKey(d)];
     if (ponto) {
       const extra = (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0);
-      workedTotal += (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) + extra;
       saldoTotal += extra - (ponto.minutoFaltante || 0);
     }
     d.setDate(d.getDate() + 1);
   }
-  const abonoMin = saldoTotal < 0 ? Math.min(-saldoTotal, tetoMin) : 0;
+  return saldoTotal < 0 ? Math.min(-saldoTotal, tetoMin) : 0;
+}
+
+// Abono usado pra prever as batidas de HOJE: o abono é um saldo do PERÍODO
+// inteiro (pode chegar ao teto de vários dias somados), mas só é permitido
+// USAR até MINUTOS_ABONO_POR_DIA_UTIL (48min) por dia — descontar o abono
+// acumulado do mês inteiro de um único dia previsto zerava a meta prevista
+// sempre que o saldo do período já estivesse perto do teto.
+// Só dias fechados (até ontem) contam pro saldo: incluir hoje deixaria o
+// saldo artificialmente negativo enquanto o dia ainda está em andamento.
+function abonoMinForToday() {
+  const { start, end } = apuracaoPeriodFor(new Date());
+  const tetoMin = countBusinessDays(start, end) * MINUTOS_ABONO_POR_DIA_UTIL;
+  const ontem = new Date();
+  ontem.setDate(ontem.getDate() - 1);
+  if (ontem < start) return 0; // hoje é o 1º dia do período, sem dias fechados ainda
+  const abonoPeriodo = abonoMinForPeriod(start, ontem < end ? ontem : end, tetoMin);
+  return Math.min(abonoPeriodo, MINUTOS_ABONO_POR_DIA_UTIL);
+}
+
+function renderFlexibilizacaoFromCache(start, end, tetoMin) {
+  let workedTotal = 0;
+  const d = new Date(start);
+  while (d <= end) {
+    const ponto = registrosPorDia[dateKey(d)];
+    if (ponto) {
+      const extra = (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0);
+      workedTotal += (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) + extra;
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  const abonoMin = abonoMinForPeriod(start, end, tetoMin);
   $("#periodoWorkedTotal").textContent = minutesToHHMM(workedTotal);
   $("#abonoEstimado").textContent = minutesToHHMM(abonoMin);
 }
@@ -748,6 +782,8 @@ function tickLive() {
   const workedEl = $("#workedToday");
   const intervalEl = $("#intervalToday");
   const remainingEl = $("#remainingToday");
+  const punch2 = document.querySelector('.punch[data-seq="2"]');
+  const punch3 = document.querySelector('.punch[data-seq="3"]');
   const punch4 = document.querySelector('.punch[data-seq="4"]');
 
   const ordenadas = ponto ? batidasOrdenadas(ponto) : [];
@@ -768,7 +804,7 @@ function tickLive() {
     intervalEl.textContent = "--:--";
     remainingEl.textContent = "--:--";
     workedEl.parentElement.classList.remove("running");
-    if (punch4) punch4.classList.remove("predicted");
+    [punch2, punch3, punch4].forEach((el) => el?.classList.remove("predicted"));
     return;
   }
 
@@ -812,16 +848,37 @@ function tickLive() {
   remainingEl.textContent = minutesToHHMM(remainingMin);
   workedEl.parentElement.classList.toggle("running", emAndamento);
 
-  // previsão de saída (4ª batida) — só enquanto o 4º slot ainda está vazio
-  // e as 3 primeiras já aconteceram (real ou digitada); é uma estimativa
-  // ("se eu continuar trabalhando sem mais pausa, termino às..."), nunca
-  // uma batida — some assim que a batida real (ou uma pendente) ocupar o slot.
-  if (punch4 && mergedTimes.length === 3 && punch4.classList.contains("fillable")) {
-    punch4.classList.add("predicted");
-    punch4.querySelector(".value").textContent = `~${hhmm(Date.now() + remainingMin * 60000)}`;
-    punch4.title = "Previsão de saída (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.";
-  } else if (punch4) {
-    punch4.classList.remove("predicted");
+  // previsão das batidas restantes — estimativa a partir da 1ª batida real
+  // (jornada padrão 8:48 menos o abono do período, dividida em duas metades
+  // com o mínimo de 30min de almoço no meio); nunca é uma batida, só some
+  // assim que a batida real (ou uma pendente) ocupar o slot.
+  const applyPredictedPunch = (el, timeMs, title) => {
+    if (!el || !el.classList.contains("fillable")) return;
+    el.classList.add("predicted");
+    el.querySelector(".value").textContent = `~${hhmm(timeMs)}`;
+    el.title = title;
+  };
+  [punch2, punch3, punch4].forEach((el) => el?.classList.remove("predicted"));
+
+  if (mergedTimes.length === 1) {
+    const metaMin = Math.max(0, JORNADA_PADRAO_MIN - abonoMinForToday());
+    const metadeMin = metaMin / 2;
+    const saida1Pred = mergedTimes[0] + metadeMin * 60000;
+    const entrada2Pred = saida1Pred + MIN_ALMOCO_MIN * 60000;
+    const saida2Pred = entrada2Pred + metadeMin * 60000;
+    applyPredictedPunch(punch2, saida1Pred, "Previsão de saída pro almoço (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
+    applyPredictedPunch(punch3, entrada2Pred, "Previsão de volta do almoço (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
+    applyPredictedPunch(punch4, saida2Pred, "Previsão de saída (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
+  } else if (mergedTimes.length === 2) {
+    const metaMin = Math.max(0, JORNADA_PADRAO_MIN - abonoMinForToday());
+    const manhaMin = (mergedTimes[1] - mergedTimes[0]) / 60000;
+    const restanteMin = Math.max(0, metaMin - manhaMin);
+    const entrada2Pred = mergedTimes[1] + MIN_ALMOCO_MIN * 60000;
+    const saida2Pred = entrada2Pred + restanteMin * 60000;
+    applyPredictedPunch(punch3, entrada2Pred, "Previsão de volta do almoço (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
+    applyPredictedPunch(punch4, saida2Pred, "Previsão de saída (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
+  } else if (mergedTimes.length === 3) {
+    applyPredictedPunch(punch4, Date.now() + remainingMin * 60000, "Previsão de saída (estimativa, não é uma batida real). Clique pra informar o horário quando bater de verdade.");
   }
 }
 

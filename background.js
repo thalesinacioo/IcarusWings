@@ -11,17 +11,199 @@ const ICARUS_URL_PATTERN = "https://web.pontoicarus.com.br/*";
 const CONSULTAR_REGISTROS_PATH = "/ponto/consultarRegistrosPonto";
 const TURNO_PATH = "/colaboradorTurno/buscarTurnoVinculadoColaborador";
 
-// Horários fixos de lembrete e o que cada um representa (n-ésima batida
-// esperada do dia). Se a pessoa já bateu esse ponto antes do horário —
-// por exemplo, voltou do almoço às 12:30 (mínimo de 30min já é aceitável)
-// — o lembrete correspondente simplesmente não aparece, porque checamos
-// "já tem N batidas?" e não "é exatamente esse horário?".
+// Rótulos das 4 batidas esperadas do dia (mesma numeração do painel). Só a
+// 1ª tem horário fixo de checagem (7:30, recorrente) — as outras 3 são
+// avisadas dinamicamente, 10min e 5min antes do horário PREVISTO do dia
+// (ver "previsão dos horários restantes" abaixo), porque a pessoa pode
+// entrar/sair em horários flexíveis, não só às 12h/13h/17h.
 const PUNCH_SCHEDULE = [
-  { seq: 1, hh: 8, mm: 0, label: "1ª entrada" },
+  { seq: 1, hh: 7, mm: 30, label: "1ª entrada" },
   { seq: 2, hh: 12, mm: 0, label: "1ª saída (almoço)" },
   { seq: 3, hh: 13, mm: 0, label: "volta do almoço" },
   { seq: 4, hh: 17, mm: 0, label: "saída" },
 ];
+
+// ---------- previsão dos horários restantes do dia ----------
+// Mesma regra do sidepanel.js (renderFlexibilizacaoFromCache / tickLive):
+// jornada padrão 8:48 menos o abono do período corrente, dividida em duas
+// metades com o mínimo de 30min de almoço no meio. Duplicado aqui (em vez
+// de compartilhado via módulo) porque o service worker roda isolado do
+// painel — se a regra do RH mudar, atualize os dois lugares.
+const JORNADA_PADRAO_MIN = 8 * 60 + 48; // 8:48
+const MIN_ALMOCO_MIN = 30;
+const MINUTOS_ABONO_POR_DIA_UTIL = 48;
+
+function easterDate(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+function nationalHolidaySet(year) {
+  const easter = easterDate(year);
+  const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
+  return [
+    new Date(year, 0, 1),
+    addDays(easter, -48),
+    addDays(easter, -47),
+    addDays(easter, -2),
+    addDays(easter, 60),
+    new Date(year, 3, 21),
+    new Date(year, 4, 1),
+    new Date(year, 8, 7),
+    new Date(year, 9, 12),
+    new Date(year, 10, 2),
+    new Date(year, 10, 15),
+    new Date(year, 10, 20),
+    new Date(year, 11, 25),
+  ].map((d) => dateKeyOf(d));
+}
+
+function isBusinessDay(date, holidaysOfYear) {
+  const dow = date.getDay();
+  if (dow === 0 || dow === 6) return false;
+  const holidays = holidaysOfYear || new Set(nationalHolidaySet(date.getFullYear()));
+  return !holidays.has(dateKeyOf(date));
+}
+
+function countBusinessDays(start, end) {
+  const holidays = new Set();
+  for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
+    nationalHolidaySet(y).forEach((k) => holidays.add(k));
+  }
+  let count = 0;
+  const d = new Date(start);
+  while (d <= end) {
+    if (isBusinessDay(d, holidays)) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return count;
+}
+
+function apuracaoPeriodFor(date) {
+  const inicioNoMesAtual = date.getDate() >= 26;
+  const start = inicioNoMesAtual
+    ? new Date(date.getFullYear(), date.getMonth(), 26)
+    : new Date(date.getFullYear(), date.getMonth() - 1, 26);
+  const end = inicioNoMesAtual
+    ? new Date(date.getFullYear(), date.getMonth() + 1, 25)
+    : new Date(date.getFullYear(), date.getMonth(), 25);
+  return { start, end };
+}
+
+// Best-effort: só enxerga o abono dos dias que o painel já buscou nesta
+// sessão (cachedRegistrosPorDia, escrito pelo sidepanel.js). Se o período
+// nunca foi consultado, abono sai 0 — subestima a previsão, não superestima.
+// Só conta dias FECHADOS (até ontem): incluir hoje inflaria o saldo negativo
+// enquanto o dia ainda está em andamento (minutoFaltante de hoje aparece
+// quase inteiro com só 1-2 batidas), zerando a meta prevista.
+// O abono é um saldo do PERÍODO inteiro (pode acumular vários dias), mas só
+// é permitido USAR até MINUTOS_ABONO_POR_DIA_UTIL (48min) por dia — por
+// isso o retorno é limitado a esse teto diário, não ao saldo do período.
+async function abonoMinForTodayBg() {
+  const { cachedRegistrosPorDia = {} } = await chrome.storage.local.get("cachedRegistrosPorDia");
+  const { start, end: periodEnd } = apuracaoPeriodFor(new Date());
+  const tetoMin = countBusinessDays(start, periodEnd) * MINUTOS_ABONO_POR_DIA_UTIL;
+  const ontem = new Date();
+  ontem.setDate(ontem.getDate() - 1);
+  if (ontem < start) return 0;
+  const end = ontem < periodEnd ? ontem : periodEnd;
+  let saldoTotal = 0;
+  const d = new Date(start);
+  while (d <= end) {
+    const ponto = cachedRegistrosPorDia[dateKeyOf(d)];
+    if (ponto) {
+      const extra = (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0);
+      saldoTotal += extra - (ponto.minutoFaltante || 0);
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  const abonoPeriodo = saldoTotal < 0 ? Math.min(-saldoTotal, tetoMin) : 0;
+  return Math.min(abonoPeriodo, MINUTOS_ABONO_POR_DIA_UTIL);
+}
+
+async function getTodayPonto() {
+  const { lastRegistros } = await chrome.storage.local.get("lastRegistros");
+  const todayKey = dateKeyOf(new Date());
+  return (lastRegistros?.pontos || []).find((p) => dateKeyOf(new Date(p.dataBatida)) === todayKey);
+}
+
+async function getTodayPunchTimesMs() {
+  const ponto = await getTodayPonto();
+  return (ponto?.pontosHorariosBatidasOrdenados || [])
+    .map((b) => (typeof b.horario === "number" ? b.horario : new Date(b.horario).getTime()))
+    .sort((a, b) => a - b);
+}
+
+// Horários previstos (ms) das batidas que ainda faltam, por seq — null se
+// ainda não bateu a 1ª (nada a prever) ou já bateu as 4 (nada mais a prever).
+async function computePredictedPunchTimes() {
+  const times = await getTodayPunchTimesMs();
+  if (times.length === 0 || times.length >= 4) return null;
+
+  if (times.length === 3) {
+    // 4ª batida: usa o "falta trabalhar" do próprio Icarus (já reflete
+    // ajuste/abono real do dia, mais preciso que a nossa estimativa).
+    const ponto = await getTodayPonto();
+    const remainingMin = ponto?.minutoFaltante || 0;
+    return { 4: Date.now() + remainingMin * 60000 };
+  }
+
+  const abonoMin = await abonoMinForTodayBg();
+  const metaMin = Math.max(0, JORNADA_PADRAO_MIN - abonoMin);
+  const metadeMin = metaMin / 2;
+
+  if (times.length === 1) {
+    const saida1 = times[0] + metadeMin * 60000;
+    const entrada2 = saida1 + MIN_ALMOCO_MIN * 60000;
+    const saida2 = entrada2 + metadeMin * 60000;
+    return { 2: saida1, 3: entrada2, 4: saida2 };
+  }
+
+  // times.length === 2
+  const manhaMin = (times[1] - times[0]) / 60000;
+  const restanteMin = Math.max(0, metaMin - manhaMin);
+  const entrada2 = times[1] + MIN_ALMOCO_MIN * 60000;
+  const saida2 = entrada2 + restanteMin * 60000;
+  return { 3: entrada2, 4: saida2 };
+}
+
+// Recria os alarmes de "10min antes" / "5min antes" pras batidas 2/3/4 a
+// partir da previsão atual. Chamado sempre que chega um novo registro do
+// Icarus (a previsão muda a cada batida real) — chrome.alarms.create com
+// nome existente substitui, então não precisa limpar antes de recriar.
+async function scheduleDynamicPunchReminders() {
+  const predicted = await computePredictedPunchTimes();
+  const now = Date.now();
+  for (const seq of [2, 3, 4]) {
+    const name10 = `punchPred_${seq}_10`;
+    const name5 = `punchPred_${seq}_5`;
+    const when = predicted?.[seq];
+    if (!when) {
+      await chrome.alarms.clear(name10);
+      await chrome.alarms.clear(name5);
+      continue;
+    }
+    const t10 = when - 10 * 60000;
+    const t5 = when - 5 * 60000;
+    if (t10 > now) chrome.alarms.create(name10, { when: t10 });
+    else await chrome.alarms.clear(name10);
+    if (t5 > now) chrome.alarms.create(name5, { when: t5 });
+    else await chrome.alarms.clear(name5);
+  }
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -50,24 +232,46 @@ function nextOccurrence(hh, mm) {
 // depois do horário previsto. Por isso os lembretes pareciam nunca disparar.
 // Agora só cria o alarme se ele ainda não existir.
 async function scheduleAllAlarms() {
-  for (const { seq, hh, mm } of PUNCH_SCHEDULE) {
-    const name = `punchReminder_${seq}`;
-    const existing = await chrome.alarms.get(name);
-    if (existing) continue;
-    chrome.alarms.create(name, {
-      when: nextOccurrence(hh, mm),
-      periodInMinutes: 24 * 60,
-    });
+  // 1ª entrada: único horário fixo, mas recorrente a cada 15min (não uma
+  // vez por dia) — assim, se ela ainda não bateu, o lembrete continua
+  // reaparecendo/permanecendo na tela (requireInteraction) até bater.
+  const name1 = "punchReminder_1";
+  const existing1 = await chrome.alarms.get(name1);
+  if (!existing1) {
+    chrome.alarms.create(name1, { when: nextOccurrence(7, 30), periodInMinutes: 15 });
   }
+  await scheduleDynamicPunchReminders();
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  const m = /^punchReminder_(\d)$/.exec(alarm.name);
-  if (!m) return;
-  const seq = Number(m[1]);
-  const entry = PUNCH_SCHEDULE.find((p) => p.seq === seq);
-  if (entry) checkAndNotify(entry);
+  if (alarm.name === "punchReminder_1") {
+    checkAndNotify(PUNCH_SCHEDULE[0]);
+    return;
+  }
+  const p = /^punchPred_(\d)_(10|5)$/.exec(alarm.name);
+  if (p) notifyUpcomingPunch(Number(p[1]), Number(p[2]));
 });
+
+// Aviso "faltam N minutos" pras batidas 2/3/4, no horário previsto — some
+// sozinho (não é requireInteraction, é só um heads-up).
+async function notifyUpcomingPunch(seq, minutesBefore) {
+  const times = await getTodayPunchTimesMs();
+  if (times.length >= seq) return; // já bateu, nada a avisar
+
+  const todayKey = dateKeyOf(new Date());
+  const pending = await getPendingAdjustments();
+  if ((pending[todayKey] || []).some((p) => p.seq === seq)) return; // já marcou "ajustar depois"
+
+  const entry = PUNCH_SCHEDULE.find((p) => p.seq === seq);
+  const label = entry?.label || `${seq}ª batida`;
+  chrome.notifications.create(`punchPred_${todayKey}_${seq}_${minutesBefore}`, {
+    type: "basic",
+    iconUrl: "icons/icon128.png",
+    title: "Hora de bater o ponto se aproximando",
+    message: `Faltam ${minutesBefore}min pro horário previsto de: ${label}.`,
+    priority: 1,
+  });
+}
 
 // ---------- checagem + notificação ----------
 
@@ -271,6 +475,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (url && url.includes(CONSULTAR_REGISTROS_PATH) && msg.payload.data) {
       chrome.storage.local.set({ lastRegistros: msg.payload.data, lastRegistrosAt: Date.now() });
       reconcilePendingAdjustments(msg.payload.data);
+      scheduleDynamicPunchReminders();
     }
     if (url && url.includes(TURNO_PATH) && msg.payload.data) {
       chrome.storage.local.set({ lastTurno: msg.payload.data, lastTurnoAt: Date.now() });
