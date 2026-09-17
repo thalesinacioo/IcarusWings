@@ -15,6 +15,11 @@ const TURNO_PATH = "/colaboradorTurno/buscarTurnoVinculadoColaborador";
 // é a fonte confiável do nome do colaborador (pessoa.nome).
 const MUTUARIO_PATH = "/mutuario/";
 
+// Pedidos de UI_ACTION disparados pelo próprio background (lembrete de
+// ponto) aguardando o UI_ACTION_RESULT correspondente — mesmo padrão do
+// __pending de api.js, só que do lado do service worker.
+const __bgPending = new Map();
+
 // Rótulos das 4 batidas esperadas do dia (mesma numeração do painel). Só a
 // 1ª tem horário fixo de checagem (7:30, recorrente) — as outras 3 são
 // avisadas dinamicamente, 10min e 5min antes do horário PREVISTO do dia
@@ -299,17 +304,69 @@ async function setPendingAdjustments(next) {
   await chrome.storage.local.set({ pendingAdjustments: next });
 }
 
+// Espera o UI_ACTION_RESULT do pedido `requestId` (resolvido pelo listener
+// de UI_ACTION_RESULT lá embaixo) — mesmo padrão do __pending de api.js,
+// só que do lado do background. Nunca rejeita: se der erro ou estourar o
+// timeout, resolve com ok:false pra quem chamou decidir o que fazer.
+function waitForActionResult(requestId, timeout = 6000) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      __bgPending.delete(requestId);
+      resolve({ ok: false, error: "timeout" });
+    }, timeout);
+    __bgPending.set(requestId, {
+      resolve: (result) => { clearTimeout(timer); resolve({ ok: true, result }); },
+      reject: (err) => { clearTimeout(timer); resolve({ ok: false, error: String(err?.message || err) }); },
+    });
+  });
+}
+
+// O UI_ACTION_RESULT só confirma que a busca foi CLICADA com sucesso — a
+// resposta de rede que realmente atualiza lastRegistros chega em paralelo,
+// via o hook de fetch/XHR do inject.js (OBSERVED_RESPONSE), não nessa mesma
+// mensagem. Por isso espera lastRegistrosAt avançar de verdade, em vez de
+// confiar num sleep de duração fixa.
+async function waitForFreshRegistros(sinceMs, timeout = 4000, interval = 200) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const { lastRegistrosAt } = await chrome.storage.local.get("lastRegistrosAt");
+    if (lastRegistrosAt && lastRegistrosAt >= sinceMs) return true;
+    await new Promise((r) => setTimeout(r, interval));
+  }
+  return false;
+}
+
 // Dispara uma busca de verdade na aba do Icarus (silenciosa, sem o painel
 // aberto) e aguarda a resposta chegar em chrome.storage.local.lastRegistros.
+// Retorna null (em vez de arriscar um número desatualizado) sempre que não
+// dá pra confirmar que a busca realmente rodou e atualizou o cache — por
+// exemplo se a aba do Icarus estava aberta em outra tela, sem os campos de
+// período esperados (BUG corrigido: antes, qualquer falha aqui era ignorada
+// e a função caía direto pra ler lastRegistros como estava, por mais velho
+// que fosse — é por isso que o lembrete de "falta bater ponto" continuava
+// aparecendo mesmo depois da pessoa já ter batido direto no site).
 async function refreshTodayAndGetPunchCount() {
   const today = new Date();
   const requestId = `bg_${Date.now()}`;
-  await sendToTab({
+  const sentAt = Date.now();
+
+  const resultPromise = waitForActionResult(requestId);
+  const sent = await sendToTab({
     source: MSG_NS,
     type: "UI_ACTION",
     payload: { requestId, action: "search", params: { dataInicioDDMMYYYY: fmtDDMMYYYY(today), dataFimDDMMYYYY: fmtDDMMYYYY(today) } },
   });
-  await new Promise((r) => setTimeout(r, 2500));
+  if (!sent.ok) {
+    __bgPending.delete(requestId);
+    return null;
+  }
+
+  const actionResult = await resultPromise;
+  if (!actionResult.ok) return null;
+
+  const fresh = await waitForFreshRegistros(sentAt);
+  if (!fresh) return null;
+
   const { lastRegistros } = await chrome.storage.local.get("lastRegistros");
   const key = dateKeyOf(today);
   const ponto = (lastRegistros?.pontos || []).find((p) => dateKeyOf(new Date(p.dataBatida)) === key);
@@ -317,11 +374,18 @@ async function refreshTodayAndGetPunchCount() {
 }
 
 async function checkAndNotify({ seq, label }) {
-  let punchCount = 0;
+  let punchCount = null;
   try {
     punchCount = await refreshTodayAndGetPunchCount();
   } catch (err) {
     console.warn("Falha ao atualizar antes do lembrete:", err);
+  }
+  // Sem confirmação de dado fresco, não arrisca notificar com base em cache
+  // velho — melhor pular esse ciclo (o alarme roda de novo em 15min) do que
+  // avisar "falta bater ponto" pra quem já bateu.
+  if (punchCount === null) {
+    console.warn(`Lembrete de "${label}" pulado: não consegui confirmar o estado atual do dia.`);
+    return;
   }
   if (punchCount >= seq) return; // já bateu esse ponto, nada a lembrar
 
@@ -444,6 +508,12 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 
   if (msg.type === "UI_ACTION_RESULT") {
+    const pending = __bgPending.get(msg.payload.requestId);
+    if (pending) {
+      __bgPending.delete(msg.payload.requestId);
+      if (msg.payload.ok) pending.resolve(msg.payload.result);
+      else pending.reject(new Error(msg.payload.error || "Ação falhou na aba do Icarus."));
+    }
     forwardToSidepanel(msg);
     return;
   }

@@ -68,6 +68,68 @@ const minutesToHHMM = (min) => {
 };
 const hhmm = (ts) => new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
+// ---------- tooltip genérico (substitui o `title` nativo em todo lugar:
+// aparece instantâneo, nunca corta na borda do painel, não muda o cursor).
+// Marcar um elemento com `data-tooltip="texto"` (estático no HTML) ou
+// `el.dataset.tooltip = "texto"` (dinâmico) é o suficiente pra ativá-lo —
+// initTooltips() usa um listener delegado, então funciona mesmo em
+// elementos recriados depois (calendário, batidas).
+let tooltipEl = null;
+function ensureTooltipEl() {
+  if (tooltipEl) return tooltipEl;
+  tooltipEl = document.createElement("div");
+  tooltipEl.className = "tooltip-bubble";
+  tooltipEl.innerHTML = '<div class="tooltip-bubble-text"></div><div class="tooltip-bubble-arrow"></div>';
+  document.body.appendChild(tooltipEl);
+  return tooltipEl;
+}
+function positionTooltip(target, el) {
+  const margin = 6;
+  const targetRect = target.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  let left = Math.round(targetRect.left + targetRect.width / 2 - elRect.width / 2);
+  left = Math.max(margin, Math.min(left, window.innerWidth - elRect.width - margin));
+  let below = false;
+  let top = Math.round(targetRect.top - elRect.height - 8);
+  if (top < margin) {
+    top = Math.round(targetRect.bottom + 8);
+    below = true;
+  }
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+  el.classList.toggle("below", below);
+  const arrowX = Math.max(10, Math.min(targetRect.left + targetRect.width / 2 - left, elRect.width - 10));
+  el.querySelector(".tooltip-bubble-arrow").style.left = `${arrowX}px`;
+}
+function showTooltip(target) {
+  const text = target.dataset.tooltip;
+  if (!text) return;
+  const el = ensureTooltipEl();
+  el.querySelector(".tooltip-bubble-text").textContent = text;
+  el.classList.add("visible");
+  positionTooltip(target, el);
+}
+function hideTooltip() {
+  tooltipEl?.classList.remove("visible");
+}
+function initTooltips() {
+  document.addEventListener("mouseover", (e) => {
+    const target = e.target.closest("[data-tooltip]");
+    if (target) showTooltip(target);
+  });
+  document.addEventListener("mouseout", (e) => {
+    const target = e.target.closest("[data-tooltip]");
+    if (target && !target.contains(e.relatedTarget)) hideTooltip();
+  });
+  document.addEventListener("focusin", (e) => {
+    const target = e.target.closest("[data-tooltip]");
+    if (target) showTooltip(target);
+  });
+  document.addEventListener("focusout", (e) => {
+    if (e.target.closest("[data-tooltip]")) hideTooltip();
+  });
+}
+
 // Soma dos intervalos ENTRE pares (saída -> próxima entrada), numa lista
 // ordenada de horários (ms) já mesclados (reais visíveis + pendentes com
 // horário). Nunca inclui o trecho em aberto no fim (isso é "trabalhado",
@@ -78,13 +140,21 @@ function intervalMinutesFromTimes(times) {
   return min;
 }
 
-function showStatus(text, type = "info") {
+let statusHideTimer = null;
+// autoHideMs: quando passado, some sozinho depois desse tempo — usado só
+// pelos avisos informativos que não têm outro evento que os esconda depois
+// (ex.: ajuste manual salvo, que é local e não dispara uma busca real que
+// chame hideStatus() via ingestRegistros).
+function showStatus(text, type = "info", autoHideMs = null) {
   const box = $("#statusBox");
   box.textContent = text;
   box.className = `status ${type}`;
   box.classList.remove("hidden");
+  clearTimeout(statusHideTimer);
+  if (autoHideMs) statusHideTimer = setTimeout(hideStatus, autoHideMs);
 }
 function hideStatus() {
+  clearTimeout(statusHideTimer);
   $("#statusBox").classList.add("hidden");
 }
 
@@ -395,21 +465,29 @@ function renderFlexibilizacaoFromCache(start, end, tetoMin) {
 
   const saldoEl = $("#saldoHoras");
   const saldo = saldoHorasAtual();
-  saldoEl.textContent = saldo || "--:--";
-  saldoEl.classList.toggle("negative", typeof saldo === "string" && saldo.trim().startsWith("-"));
-
   const saldoMin = parseHHMMToMinutes(saldo);
-  if (saldoMin !== null && saldoMin < 0 && -saldoMin > abonoMin) {
+  const usadoMin = saldoMin !== null ? Math.max(0, -saldoMin) : null;
+  saldoEl.textContent = usadoMin !== null ? minutesToHHMM(usadoMin) : "--:--";
+
+  saldoEl.classList.remove("status-green", "status-yellow", "status-red");
+  if (usadoMin !== null) {
+    saldoEl.classList.add(usadoMin < abonoMin ? "status-green" : usadoMin === abonoMin ? "status-yellow" : "status-red");
+  }
+
+  const explicacaoSaldo = "Cálculo de quantas horas você já utilizou do abono.";
+  let avisoSaldo;
+  if (usadoMin !== null && usadoMin > abonoMin) {
     if (periodoTemAjustePendente(start, end)) {
-      saldoEl.title = "Parece que tem ajustes pendentes, verifique com seu gestor.";
+      avisoSaldo = "Parece que tem ajustes pendentes, verifique com seu gestor.";
     } else if (periodoTemDiaComPoucasBatidas(start, end)) {
-      saldoEl.title = "Verifique suas horas, você tem inconsistências.";
+      avisoSaldo = "Verifique suas horas, você tem inconsistências.";
     } else {
-      saldoEl.title = "Parece que suas horas estão abaixo do esperado, acho que você tem problemas.";
+      avisoSaldo = "Parece que suas horas estão abaixo do esperado, acho que você tem problemas.";
     }
   } else {
-    saldoEl.title = "";
+    avisoSaldo = "Suas horas estão dentro do esperado.";
   }
+  $("#saldoHorasBox").dataset.tooltip = `${avisoSaldo}\n\n${explicacaoSaldo}`;
 }
 
 // Saldo de horas de HOJE, direto do próprio Icarus (ponto.tempoSaldo — já
@@ -593,11 +671,6 @@ function renderCalendar() {
     const cell = document.createElement("div");
     cell.className = `day${cls ? " " + cls : ""}${key === todayKey ? " today" : ""}${isSelected ? " selected" : ""}${hasPending ? " has-pending" : ""}`;
     cell.innerHTML = `<span class="chip">${day}</span>`;
-    if (ponto) {
-      cell.title = `Normal ${ponto.tempoNormal || "--"} · Falta ${ponto.tempoFaltando || "--"} · Saldo ${ponto.tempoSaldo || "--"}`;
-    } else if (ferias) {
-      cell.title = `${FERIAS_FOLGAS_LABEL[ferias.tipo]}${ferias.nota ? ": " + ferias.nota : ""}`;
-    }
     cell.classList.add("clickable");
     cell.addEventListener("click", () => selectDay(d));
     grid.appendChild(cell);
@@ -663,7 +736,7 @@ function renderDayPanel() {
       valueEl.textContent = b.horarioFormatadoSemData || "--:--";
       el.classList.toggle("manual", isBatidaManual(b));
       el.classList.add("deletable");
-      el.title = `${b.marcacaoFmt || ""}${isBatidaManual(b) ? ` · ${b.tipoRegistroFmt}` : ""} · Clique pra marcar como pendente de exclusão.`;
+      el.dataset.tooltip = `${b.marcacaoFmt || ""}${isBatidaManual(b) ? ` · ${b.tipoRegistroFmt}` : ""} · Clique pra marcar como pendente de exclusão.`;
       el.onclick = () => markPunchPendingDeletion(key, seq, b);
     } else if (item?.pending) {
       const pend = item.pending;
@@ -676,7 +749,7 @@ function renderDayPanel() {
       const shown = pend.approxTime || hhmm(pend.clickedAt);
       valueEl.textContent = `~${shown}`;
       el.classList.add("pending", "fillable");
-      el.title = pend.approxTime
+      el.dataset.tooltip = pend.approxTime
         ? `Ajuste manual: ${pend.approxTime}, ainda não registrado no Icarus. Clique pra editar.`
         : `Marcado como "ajustar depois" às ${hhmm(pend.clickedAt)}, ainda não registrado no Icarus. Clique pra informar o horário.`;
       el.onclick = () => openPunchTimeModal(key, pend.seq, label, pend.approxTime);
@@ -684,7 +757,7 @@ function renderDayPanel() {
       const label = PUNCH_SCHEDULE.find((s) => s.seq === seq)?.label || `${seq}ª batida`;
       valueEl.textContent = "--:--";
       el.classList.add("fillable");
-      el.title = "Batida não registrada. Clique pra informar o horário aproximado.";
+      el.dataset.tooltip = "Batida não registrada. Clique pra informar o horário aproximado.";
       el.onclick = () => openPunchTimeModal(key, seq, label, null);
     }
   });
@@ -727,13 +800,14 @@ function renderDayPanel() {
         const posAtual = merged.findIndex((item) => item.pending === p) + 1;
         const label = (posAtual > 0 && PUNCH_SCHEDULE.find((s) => s.seq === posAtual)?.label) || p.label;
         const texto = p.approxTime
-          ? `${label}, ajuste manual ${p.approxTime}, falta registrar no Icarus.`
+          ? `${label} ${p.approxTime}, falta registrar no Icarus.`
           : `${label}, clicado em "ajustar depois" às ${hhmm(p.clickedAt)}, falta registrar no Icarus.`;
         return `<div class="pending-item">
           <label class="pending-check-label">
             <input type="checkbox" class="pending-adjust-check" data-seq="${p.seq}" ${p.done ? "checked" : ""} />
             <span class="pending-text${p.done ? " struck" : ""}">${texto}</span>
           </label>
+          <button type="button" class="pending-cancel" data-remove-seq="${p.seq}" title="Remover ajuste pendente">✕</button>
         </div>`;
       })
       .join("");
@@ -747,7 +821,7 @@ function renderDayPanel() {
     pendingBox.querySelectorAll(".pending-adjust-check").forEach((cb) => {
       cb.addEventListener("change", () => IcarusAPI.setPendingAdjustmentDone(key, Number(cb.dataset.seq), cb.checked));
     });
-    pendingBox.querySelectorAll(".pending-cancel").forEach((btn) => {
+    pendingBox.querySelectorAll(".pending-cancel[data-horario]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const ok = await showConfirm("A batida volta a aparecer no cartão de batidas.", {
           title: "Cancelar exclusão pendente",
@@ -755,6 +829,16 @@ function renderDayPanel() {
           cancelLabel: "Voltar",
         });
         if (ok) IcarusAPI.resolvePendingDeletion(key, Number(btn.dataset.horario));
+      });
+    });
+    pendingBox.querySelectorAll(".pending-cancel[data-remove-seq]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const ok = await showConfirm("O ajuste manual será removido. Você pode informar de novo depois se ainda precisar.", {
+          title: "Remover ajuste pendente",
+          okLabel: "Remover",
+          cancelLabel: "Voltar",
+        });
+        if (ok) IcarusAPI.removePendingAdjustment(key, Number(btn.dataset.removeSeq));
       });
     });
   } else {
@@ -937,11 +1021,18 @@ function clearPunchTimeInput() {
 async function savePunchTimeModal() {
   if (!punchTimeModalCtx) return;
   const value = $("#punchTimeModalInput").value; // "HH:MM"
-  if (!value) return;
   const { dateKey: dk, seq, label } = punchTimeModalCtx;
+  // Campo limpo (botão "✕" do modal) + Salvar = remover o ajuste pendente,
+  // mesmo caminho do "✕" da lista de ajustes pendentes — antes isso só
+  // fechava sem fazer nada (nem salvava, nem removia).
+  if (!value) {
+    await IcarusAPI.removePendingAdjustment(dk, seq);
+    closePunchTimeModal();
+    return;
+  }
   await IcarusAPI.setPendingAdjustmentTime(dk, seq, label, value);
   closePunchTimeModal();
-  showStatus(`Ajuste manual salvo para "${label}", lembre de ajustar de verdade no Icarus.`, "info");
+  showStatus(`Ajuste manual salvo para "${label}", lembre de ajustar de verdade no Icarus.`, "info", 5000);
   // storage.onChanged já dispara icarus:pendingAdjustmentsChanged, que recarrega
 }
 
@@ -1024,11 +1115,11 @@ function tickLive() {
   // (meta fixa de hoje, 8:00 ou 8:48 com o checkbox, dividida em duas
   // metades com o mínimo de almoço configurado no meio); nunca é uma
   // batida, só some assim que a batida real (ou uma pendente) ocupar o slot.
-  const applyPredictedPunch = (el, timeMs, title) => {
+  const applyPredictedPunch = (el, timeMs, tooltip) => {
     if (!el || !el.classList.contains("fillable")) return;
     el.classList.add("predicted");
     el.querySelector(".value").textContent = `~${hhmm(timeMs)}`;
-    el.title = title;
+    el.dataset.tooltip = tooltip;
   };
   [punch2, punch3, punch4].forEach((el) => el?.classList.remove("predicted"));
 
@@ -1059,6 +1150,26 @@ function tickLive() {
 
 // ---------- registrar ponto ----------
 
+// Troca texto <-> 👍 por 2s no botão de bater ponto. Separada de baterPonto()
+// de propósito: dá pra testar a animação sozinha no console do painel
+// (`playBaterPontoSuccessAnimation()`) sem registrar ponto de verdade.
+let baterPontoSuccessTimer = null;
+let baterPontoExitTimer = null;
+function playBaterPontoSuccessAnimation() {
+  const btn = $("#baterPontoBtn");
+  clearTimeout(baterPontoSuccessTimer);
+  clearTimeout(baterPontoExitTimer);
+  btn.classList.remove("success", "success-exit");
+  void btn.offsetWidth; // força reflow pra reiniciar a animação do zero
+  btn.classList.add("success");
+  baterPontoSuccessTimer = setTimeout(() => {
+    btn.classList.remove("success");
+    void btn.offsetWidth; // força reflow pra reiniciar a animação de saída
+    btn.classList.add("success-exit");
+    baterPontoExitTimer = setTimeout(() => btn.classList.remove("success-exit"), 400);
+  }, 2000);
+}
+
 async function baterPonto() {
   const ok = await showConfirm("Registrar ponto agora, no horário atual, na aba do Icarus?", {
     title: "Registrar Ponto",
@@ -1071,6 +1182,7 @@ async function baterPonto() {
   try {
     await IcarusAPI.baterPonto();
     showStatus("Ponto registrado! Atualizando…", "info");
+    playBaterPontoSuccessAnimation();
     setTimeout(fetchMonth, 1200);
   } catch (err) {
     showStatus(`Erro ao registrar ponto: ${err.message}`, "error");
@@ -1149,6 +1261,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (cachedRegistrosPorDia) registrosPorDia = cachedRegistrosPorDia;
 
   // 2) desenha o calendário e o restante da UI na hora, sem esperar rede
+  initTooltips();
   renderCalendar();
   renderDayPanel();
   loadPendingAdjustments();

@@ -197,6 +197,17 @@ const IcarusAPI = {
     await chrome.storage.local.set({ pendingAdjustments });
   },
 
+  // Remove de vez um ajuste manual pendente (horário digitado ou "ajustar
+  // depois" sem horário) — o slot volta a aparecer como batida não
+  // registrada, pra digitar de novo se ainda precisar.
+  async removePendingAdjustment(dateKeyStr, seq) {
+    const { pendingAdjustments = {} } = await chrome.storage.local.get({ pendingAdjustments: {} });
+    const dayList = (pendingAdjustments[dateKeyStr] || []).filter((p) => !(p.type !== "delete" && p.seq === seq));
+    if (dayList.length) pendingAdjustments[dateKeyStr] = dayList;
+    else delete pendingAdjustments[dateKeyStr];
+    await chrome.storage.local.set({ pendingAdjustments });
+  },
+
   // Períodos de férias/folga/abono informados manualmente — só pra marcar
   // o calendário (rosa), não manda nada pro Icarus.
   // [{ id, tipo: "ferias"|"folga"|"abono", inicio: "YYYY-MM-DD", fim: "YYYY-MM-DD", nota? }]

@@ -12,15 +12,17 @@
       <span class="dot"></span>
       <strong id="appTitle">Ponto Icarus</strong>
     </div>
-    <button id="refreshBtn" class="icon-btn" title="Atualizar">⟳</button>
+    <button id="refreshBtn" class="icon-btn" data-tooltip="Atualizar">⟳</button>
   </header>
 
   <main id="app">
-    <section id="statusBox" class="status hidden"></section>
 
     <section class="card">
       <button id="baterPontoBtn" class="primary-btn">
-        ◎ Registrar Ponto
+        <span class="btn-icon">◎</span>
+        <span class="btn-divider"></span>
+        <span class="btn-label">Bater o ponto agora!</span>
+        <span class="btn-emoji" aria-hidden="true">👍</span>
       </button>
     </section>
 
@@ -35,11 +37,11 @@
       </div>
       <div id="calendarGrid" class="calendar-grid"></div>
       <div class="legend">
-        <span><i class="dot red"></i> Erro/Falta</span>
-        <span><i class="dot purple"></i> Ajuste manual</span>
-        <span><i class="dot orange"></i> Ajuste pendente</span>
-        <span><i class="dot gray"></i> Feriado</span>
-        <span><i class="dot pink"></i> Férias/Folgas programadas</span>
+        <span class="legend-swatch red" tabindex="0" data-tooltip="Erro/Falta"></span>
+        <span class="legend-swatch purple" tabindex="0" data-tooltip="Ajuste manual"></span>
+        <span class="legend-swatch orange" tabindex="0" data-tooltip="Ajuste pendente"></span>
+        <span class="legend-swatch holiday" tabindex="0" data-tooltip="Feriado"></span>
+        <span class="legend-swatch pink" tabindex="0" data-tooltip="Férias/Folgas programadas"></span>
       </div>
     </section>
 
@@ -76,8 +78,14 @@
     <section class="card">
       <div class="card-title">Flexibilização do mês <span class="wip-tag">(ainda em construção)</span></div>
       <div class="period-summary">
-        <div><span class="hs-label">Saldo de Horas</span><span id="saldoHoras" class="hs-value">--:--</span></div>
-        <div><span class="hs-label">Abono estimado</span><span id="abonoEstimado" class="hs-value">--:--</span></div>
+        <div class="period-summary-item" id="saldoHorasBox" tabindex="0">
+          <span class="hs-label">Saldo de Horas</span>
+          <span id="saldoHoras" class="hs-value">--:--</span>
+        </div>
+        <div class="period-summary-item" id="abonoEstimadoBox" tabindex="0" data-tooltip="Esse é o quanto de horas que você ainda tem de abono se você faz 08h/dia.">
+          <span class="hs-label">Abono estimado</span>
+          <span id="abonoEstimado" class="hs-value">--:--</span>
+        </div>
         <div><span class="hs-label">Horas do Mês</span><span id="periodoWorkedTotal" class="hs-value">--:--</span></div>
       </div>
       <p class="hint" id="periodoRange">—</p>
@@ -102,6 +110,7 @@
       </div>
     </section>
 
+    <section id="statusBox" class="status hidden"></section>
   </main>
 
   <footer class="app-footer">

@@ -88,13 +88,25 @@ própria extensão abre uma, fixada e em segundo plano, sem tirar seu foco.
 
 ## Como instalar (modo desenvolvedor)
 
-1. Clone este repositório (ou baixe o ZIP e extraia)
-2. Abra `chrome://extensions`
-3. Ative **"Modo do desenvolvedor"** (canto superior direito)
-4. Clique em **"Carregar sem compactação"** e selecione a pasta do
+Clone este repositório (ou baixe o ZIP e extraia)
+
+**Via git (recomendado, atualizar depois é só um `git pull`):**
+```bash
+git clone https://github.com/thalesinacioo/IcarusWings.git
+```
+Depois, em `chrome://extensions` → "Modo do desenvolvedor" → "Carregar sem compactação" → selecione a pasta clonada. Pra atualizar pra próxima versão, só rode dentro da pasta:
+```bash
+git pull
+```
+e recarregue a extensão (ícone ⟳ em chrome://extensions).
+
+**Via Zip**
+1. Abra `chrome://extensions`
+2. Ative **"Modo do desenvolvedor"** (canto superior direito)
+3. Clique em **"Carregar sem compactação"** e selecione a pasta do
    projeto
-5. Abra `https://web.pontoicarus.com.br/ponto` e faça login normalmente
-6. Clique no ícone da extensão pra abrir o painel lateral
+4. Abra `https://web.pontoicarus.com.br/ponto` e faça login normalmente
+5. Clique no ícone da extensão pra abrir o painel lateral
 
 Na primeira vez, deixe a tela de Registro de Ponto carregar por completo
 — é assim que a extensão aprende sua matrícula (`idColaborador`), sem
