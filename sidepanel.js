@@ -67,6 +67,7 @@ const minutesToHHMM = (min) => {
   return `${sign}${pad2(Math.floor(min / 60))}:${pad2(min % 60)}`;
 };
 const hhmm = (ts) => new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+const capitalizeFirst = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // ---------- tooltip genérico (substitui o `title` nativo em todo lugar:
 // aparece instantâneo, nunca corta na borda do painel, não muda o cursor).
@@ -140,22 +141,138 @@ function intervalMinutesFromTimes(times) {
   return min;
 }
 
-let statusHideTimer = null;
-// autoHideMs: quando passado, some sozinho depois desse tempo — usado só
-// pelos avisos informativos que não têm outro evento que os esconda depois
-// (ex.: ajuste manual salvo, que é local e não dispara uma busca real que
-// chame hideStatus() via ingestRegistros).
+// Pilha única de avisos flutuantes, ancorada embaixo do botão Atualizar —
+// uma flechinha só, no topo do contêiner, sempre apontando pra ele. Cada
+// aviso (status, nova versão, ...) é uma "linha" independente identificada
+// por chave — chamar de novo com a mesma chave atualiza a mesma linha em
+// vez de criar outra; linhas diferentes se empilham uma abaixo da outra,
+// todas alinhadas pela borda direita (`align-items: flex-end`).
+const STATUS_COLORS = { info: ["#e5f4ee", "#0d5a3a"], error: ["#fde2e2", "#8a1f1f"], update: ["#f97316", "#ffffff"] };
+let notificationStackEl = null;
+const notificationRows = new Map(); // id -> { el, hideTimer }
+
+function ensureNotificationStack() {
+  if (notificationStackEl) return notificationStackEl;
+  notificationStackEl = document.createElement("div");
+  notificationStackEl.className = "notification-stack";
+  notificationStackEl.innerHTML = '<div class="notification-stack-rows"></div>';
+  document.body.appendChild(notificationStackEl);
+  return notificationStackEl;
+}
+
+function positionNotificationStack() {
+  const el = ensureNotificationStack();
+  const firstRow = el.querySelector(".notification-stack-rows").firstElementChild;
+  if (!firstRow) return;
+  const margin = 6;
+  const targetRect = $(firstRow.dataset.anchor || "#refreshBtn").getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
+  let left = Math.round(targetRect.right - rect.width);
+  left = Math.max(margin, Math.min(left, window.innerWidth - rect.width - margin));
+  el.style.left = `${left}px`;
+  el.style.top = `${Math.round(targetRect.bottom + 8)}px`;
+
+  // A flechinha é uma só pra pilha inteira e sempre sai da linha do topo —
+  // filha DELA (não da pilha), pra não sobrar fresta entre a ponta e a
+  // borda arredondada do balão (mesmo truque do tooltip genérico).
+  let arrow = firstRow.querySelector(".tooltip-bubble-arrow");
+  if (!arrow) {
+    arrow = document.createElement("span");
+    arrow.className = "tooltip-bubble-arrow";
+    firstRow.appendChild(arrow);
+  } else {
+    firstRow.appendChild(arrow); // reparenta se estava numa linha anterior
+  }
+  const rowRect = firstRow.getBoundingClientRect();
+  // Clampar pelo CENTRO da seta (não pela borda esquerda dela) — a seta tem
+  // 10px de largura, então só limitar a borda esquerda deixava a borda
+  // direita invadir a curva do border-radius do balão (10px) do outro lado.
+  const arrowHalf = 5;
+  const cornerSafe = 10; // border-radius de .notification-row
+  const minCenter = cornerSafe + arrowHalf;
+  const maxCenter = rowRect.width - cornerSafe - arrowHalf;
+  const rawCenter = targetRect.left + targetRect.width / 2 - rowRect.left;
+  const arrowCenter = Math.max(minCenter, Math.min(rawCenter, maxCenter));
+  arrow.style.left = `${arrowCenter - arrowHalf}px`;
+}
+
+function showNotificationRow(id, { text, href, type = "info", closable = false, autoHideMs = null, anchor = "#refreshBtn" }) {
+  const stack = ensureNotificationStack();
+  const rowsBox = stack.querySelector(".notification-stack-rows");
+  let entry = notificationRows.get(id);
+  if (!entry) {
+    const el = document.createElement("div");
+    el.className = "notification-row";
+    el.innerHTML =
+      `<${href ? "a" : "span"} class="notification-row-text"></${href ? "a" : "span"}>` +
+      '<span class="notification-row-divider"></span>' +
+      '<button type="button" class="notification-row-close" aria-label="Fechar">✕</button>';
+    el.querySelector(".notification-row-close").addEventListener("click", () => hideNotificationRow(id));
+    entry = { el };
+    notificationRows.set(id, entry);
+    rowsBox.appendChild(el);
+  }
+  clearTimeout(entry.hideTimer);
+  const [bg, fg] = STATUS_COLORS[type] || STATUS_COLORS.info;
+  entry.el.style.setProperty("--status-bg", bg);
+  entry.el.style.setProperty("--status-text", fg);
+  entry.el.classList.toggle("closable", closable);
+  entry.el.dataset.anchor = anchor;
+  const textEl = entry.el.querySelector(".notification-row-text");
+  textEl.textContent = text;
+  if (href) {
+    textEl.href = href;
+    textEl.target = "_blank";
+    textEl.rel = "noopener";
+  }
+  stack.classList.add("visible");
+  positionNotificationStack();
+  if (autoHideMs) entry.hideTimer = setTimeout(() => hideNotificationRow(id), autoHideMs);
+}
+function hideNotificationRow(id) {
+  const entry = notificationRows.get(id);
+  if (!entry) return;
+  clearTimeout(entry.hideTimer);
+  entry.el.remove();
+  notificationRows.delete(id);
+  const stack = ensureNotificationStack();
+  if (notificationRows.size === 0) stack.classList.remove("visible");
+  else positionNotificationStack();
+}
+
+// autoHideMs: quando passado, some sozinho depois desse tempo (hoje só
+// "Buscando na aba do Icarus…" usa isso); sem isso, o aviso fica flutuando
+// até o usuário clicar no "✕".
 function showStatus(text, type = "info", autoHideMs = null) {
-  const box = $("#statusBox");
-  box.textContent = text;
-  box.className = `status ${type}`;
-  box.classList.remove("hidden");
-  clearTimeout(statusHideTimer);
-  if (autoHideMs) statusHideTimer = setTimeout(hideStatus, autoHideMs);
+  showNotificationRow("status", { text, type, closable: !autoHideMs, autoHideMs, anchor: "#refreshBtn" });
 }
 function hideStatus() {
-  clearTimeout(statusHideTimer);
-  $("#statusBox").classList.add("hidden");
+  hideNotificationRow("status");
+}
+
+// Popup de configurações (era o accordion "Funções extras", agora abre a
+// partir da engrenagem no topbar). Largura/posição horizontal seguem o
+// cartão do calendário (mesma largura de conteúdo do painel), recalculadas
+// toda vez que abre e também num resize da janela — assim acompanha o
+// usuário redimensionando o side panel enquanto o popup está aberto.
+function positionSettingsPopup() {
+  const popup = $("#settingsPopup");
+  const cardRect = $("#calendarCard").getBoundingClientRect();
+  const btnRect = $("#settingsBtn").getBoundingClientRect();
+  popup.style.left = `${Math.round(cardRect.left)}px`;
+  popup.style.width = `${Math.round(cardRect.width)}px`;
+  popup.style.top = `${Math.round(btnRect.bottom + 8)}px`;
+}
+function openSettingsPopup() {
+  $("#settingsPopup").classList.remove("hidden");
+  positionSettingsPopup();
+}
+function closeSettingsPopup() {
+  $("#settingsPopup").classList.add("hidden");
+}
+function toggleSettingsPopup() {
+  if ($("#settingsPopup").classList.contains("hidden")) openSettingsPopup();
+  else closeSettingsPopup();
 }
 
 // Confirmação dentro do próprio painel — window.confirm() nativo aparece
@@ -276,22 +393,45 @@ async function saveFeriasFolgasModal() {
 function loadMonth() {
   renderCalendar(); // desenha a grade imediatamente com o que já houver em cache
   fetchMonth();
+  showFlexibilizacaoInstant(); // Flexibilização acompanha o mês em exibição, não só "hoje"
+  fetchFlexibilizacao();
 }
 
 async function fetchMonth() {
   const first = new Date(currentYear, currentMonth, 1);
   const last = new Date(currentYear, currentMonth + 1, 0);
-  $("#monthLabel").textContent = first.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  $("#monthLabel").textContent = capitalizeFirst(first.toLocaleDateString("pt-BR", { month: "long", year: "numeric" }));
 
-  showStatus("Buscando na aba do Icarus…", "info");
   try {
     await IcarusAPI.searchPeriod(first, last);
     await new Promise((r) => setTimeout(r, 1200));
     const { data } = await IcarusAPI.getLastRegistros();
     if (data) ingestRegistros(data);
+    playRefreshSuccessAnimation();
   } catch (err) {
     showStatus(`Erro ao buscar: ${err.message}`, "error");
   }
+}
+
+// Pisca verde suavemente + mostra ✓ por 3s no botão Atualizar, no lugar do
+// balão "Buscando na aba do Icarus…" — mesmo padrão do botão de bater ponto
+// (playBaterPontoSuccessAnimation). Separada de propósito: dá pra testar
+// sozinha no console (`playRefreshSuccessAnimation()`) sem buscar de verdade.
+let refreshSuccessTimer = null;
+let refreshExitTimer = null;
+function playRefreshSuccessAnimation() {
+  const btn = $("#refreshBtn");
+  clearTimeout(refreshSuccessTimer);
+  clearTimeout(refreshExitTimer);
+  btn.classList.remove("success", "success-exit");
+  void btn.offsetWidth; // força reflow pra reiniciar a animação do zero
+  btn.classList.add("success");
+  refreshSuccessTimer = setTimeout(() => {
+    btn.classList.remove("success");
+    void btn.offsetWidth; // força reflow pra reiniciar a animação de saída
+    btn.classList.add("success-exit");
+    refreshExitTimer = setTimeout(() => btn.classList.remove("success-exit"), 300);
+  }, 3000);
 }
 
 // ---------- flexibilização / abono (regra do RH) ----------
@@ -504,12 +644,16 @@ function saldoHorasAtual() {
 
 // Mostra período/teto/valores na hora com o que já tiver em cache — sem
 // esperar rede, mesmo padrão do resto do painel (nunca abre vazio).
+// Acompanha o mês em exibição no calendário (currentMonth/currentYear), não
+// sempre "hoje" — dia 1 do mês é sempre < 26, então o período resultante é
+// "dia 26 do mês anterior ao dia 25 do mês em exibição" (convenção usual de
+// rotular o período de apuração pelo mês em que ele fecha).
 function showFlexibilizacaoInstant() {
-  const { start, end } = apuracaoPeriodFor(new Date());
+  const { start, end } = apuracaoPeriodFor(new Date(currentYear, currentMonth, 1));
   const diasUteis = countBusinessDays(start, end);
   const tetoMin = diasUteis * MINUTOS_ABONO_POR_DIA_UTIL;
   const fmtDDMM = (d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-  $("#periodoRange").textContent = `${fmtDDMM(start)} – ${fmtDDMM(end)} · ${diasUteis} dias úteis · teto ${minutesToHHMM(tetoMin)}`;
+  $("#periodoRange").innerHTML = `${fmtDDMM(start)} – ${fmtDDMM(end)} · ${diasUteis} dias úteis · Teto abono mês: <strong>${minutesToHHMM(tetoMin)}</strong>`;
   renderFlexibilizacaoFromCache(start, end, tetoMin);
   return { start, end, tetoMin };
 }
@@ -539,6 +683,13 @@ function compareVersions(a, b) {
   return 0;
 }
 
+// Aviso de "nova versão disponível" — vira mais uma linha na mesma pilha
+// do status, mas ancorada na engrenagem (é lá que fica a versão), não no
+// Atualizar — assim a flechinha indica o botão certo pra clicar.
+function showUpdateNotice(latest, url) {
+  showNotificationRow("update", { text: `Nova versão disponível (v${latest})`, href: url, type: "update", closable: true, anchor: "#settingsBtn" });
+}
+
 async function checkForUpdate() {
   const current = chrome.runtime.getManifest().version;
   const versionEl = $("#appVersion");
@@ -550,6 +701,7 @@ async function checkForUpdate() {
     const latest = (release.tag_name || "").replace(/^v/, "");
     if (latest && compareVersions(latest, current) > 0) {
       versionEl.innerHTML = `Versão atual: v${current} · <a href="${release.html_url}" target="_blank" rel="noopener">Nova versão disponível (v${latest})</a>`;
+      showUpdateNotice(latest, release.html_url);
     }
   } catch (err) {
     // sem internet — mantém só a versão instalada, sem travar nada
@@ -646,7 +798,7 @@ function feriasFolgaParaDia(key) {
 function renderCalendar() {
   const first = new Date(currentYear, currentMonth, 1);
   const last = new Date(currentYear, currentMonth + 1, 0);
-  $("#monthLabel").textContent = first.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  $("#monthLabel").textContent = capitalizeFirst(first.toLocaleDateString("pt-BR", { month: "long", year: "numeric" }));
 
   const grid = $("#calendarGrid");
   grid.innerHTML = "";
@@ -707,7 +859,7 @@ function renderDayPanel() {
 
   $("#dayPanelTitle").textContent = isToday
     ? "Batidas de hoje"
-    : `Batidas de ${date.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })}`;
+    : `Batidas de ${date.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit" })}`;
   $("#backToTodayBtn").classList.toggle("hidden", isToday);
   $("#workedLabel").textContent = isToday ? "Trabalhado hoje" : "Normal";
   $("#remainingLabel").textContent = isToday ? "Falta trabalhar" : "Faltando";
@@ -1032,7 +1184,10 @@ async function savePunchTimeModal() {
   }
   await IcarusAPI.setPendingAdjustmentTime(dk, seq, label, value);
   closePunchTimeModal();
-  showStatus(`Ajuste manual salvo para "${label}", lembre de ajustar de verdade no Icarus.`, "info", 5000);
+  // Removido: só fazia sentido se o ajuste fosse enviado de verdade pro
+  // Icarus. Hoje ele só fica salvo localmente na extensão, então esse aviso
+  // não agrega nada — reativar se um dia isso mudar.
+  // showStatus(`Ajuste manual salvo para "${label}", lembre de ajustar de verdade no Icarus.`, "info");
   // storage.onChanged já dispara icarus:pendingAdjustmentsChanged, que recarrega
 }
 
@@ -1234,11 +1389,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     tickLive();
   });
 
-  $("#configToggle").addEventListener("click", () => {
-    const expanded = $("#configToggle").getAttribute("aria-expanded") === "true";
-    $("#configToggle").setAttribute("aria-expanded", String(!expanded));
-    $("#configOptions").classList.toggle("hidden", expanded);
-    $("#configToggleIcon").textContent = expanded ? "▸" : "▾";
+  $("#settingsBtn").addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    toggleSettingsPopup();
+  });
+  document.addEventListener("click", (ev) => {
+    const popup = $("#settingsPopup");
+    if (!popup.classList.contains("hidden") && !popup.contains(ev.target) && ev.target !== $("#settingsBtn")) {
+      closeSettingsPopup();
+    }
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closeSettingsPopup();
+  });
+  window.addEventListener("resize", () => {
+    if (!$("#settingsPopup").classList.contains("hidden")) positionSettingsPopup();
   });
 
   $("#addFeriasFolgasBtn").addEventListener("click", openFeriasFolgasModal);

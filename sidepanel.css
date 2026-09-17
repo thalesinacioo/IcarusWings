@@ -34,6 +34,9 @@ body {
   color: var(--text);
   font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   font-size: 13px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .topbar {
@@ -49,6 +52,7 @@ body {
 }
 .brand { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand); display: inline-block; }
+.topbar-actions { display: flex; align-items: center; gap: 6px; }
 
 .icon-btn {
   background: none;
@@ -60,43 +64,125 @@ body {
   color: var(--text);
   font-size: 15px;
   line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .icon-btn:hover { background: var(--border); }
 
-#app { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+#refreshBtn .refresh-check { display: none; }
+/* animation (não transition): um "piscar" contínuo com transition e troca
+   rápida de classe (success -> success-exit) pode deixar a transição presa
+   a meio caminho (verde permanente) — @keyframes de tiro único, iguais ao
+   padrão já usado no botão de bater ponto, não têm esse problema. */
+#refreshBtn.success { animation: refresh-flash-in 0.25s ease forwards; }
+#refreshBtn.success-exit { animation: refresh-flash-out 0.3s ease forwards; }
+#refreshBtn.success .refresh-icon,
+#refreshBtn.success-exit .refresh-icon { display: none; }
+#refreshBtn.success .refresh-check { display: inline-block; animation: refresh-check-pop-in 0.4s ease; }
+#refreshBtn.success-exit .refresh-check { display: inline-block; animation: refresh-check-pop-out 0.3s ease forwards; }
+@keyframes refresh-flash-in {
+  from { background-color: transparent; border-color: var(--border); color: var(--text); }
+  to { background-color: var(--green); border-color: var(--green); color: #fff; }
+}
+@keyframes refresh-flash-out {
+  from { background-color: var(--green); border-color: var(--green); color: #fff; }
+  to { background-color: transparent; border-color: var(--border); color: var(--text); }
+}
+@keyframes refresh-check-pop-in {
+  0% { transform: scale(0.3); opacity: 0; }
+  60% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); }
+}
+@keyframes refresh-check-pop-out {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.3); opacity: 0; }
+}
+
+#app {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 
 .card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 12px;
+  flex-shrink: 0;
+}
+#dayPanelCard {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 .card-title { font-weight: 600; margin-bottom: 8px; }
 
-.config-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-}
-.config-toggle-icon { font-size: 10px; color: var(--muted); transition: transform 0.15s ease; }
-.config-toggle[aria-expanded="true"] .config-toggle-icon { transform: rotate(90deg); }
 .wip-tag { font-weight: 400; font-size: 10.5px; color: var(--muted); }
 
-.status {
-  border-radius: 10px;
-  padding: 8px 10px;
-  font-size: 12px;
+.settings-popup {
+  position: fixed;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 40;
 }
-.status.error { background: #fde2e2; color: #8a1f1f; }
-.status.info { background: #e5f4ee; color: #0d5a3a; }
+.settings-popup-version { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 10.5px; color: var(--muted); text-align: center; }
+.settings-popup-version a { color: var(--orange); font-weight: 600; text-decoration: none; }
+.settings-popup-version a:hover { text-decoration: underline; }
+
+.notification-stack {
+  position: fixed;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 50;
+  transition: none;
+}
+.notification-stack.visible { visibility: visible; opacity: 1; pointer-events: auto; }
+.notification-stack-rows { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+
+.notification-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  max-width: 240px;
+  background: var(--status-bg);
+  color: var(--status-text);
+}
+/* filha de verdade do balão (não da pilha) — sem isso sobra uma fresta de
+   sub-pixel entre a ponta da seta e a borda arredondada do balão. */
+.notification-row .tooltip-bubble-arrow {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--status-bg);
+}
+.notification-row-text { flex: 1; color: inherit; text-decoration: none; }
+a.notification-row-text:hover { text-decoration: underline; }
+.notification-row-divider { display: none; width: 1px; align-self: stretch; background: currentColor; opacity: 0.3; }
+.notification-row-close { display: none; background: none; border: none; color: inherit; cursor: pointer; font-size: 12px; padding: 0; flex-shrink: 0; }
+.notification-row.closable .notification-row-divider,
+.notification-row.closable .notification-row-close { display: block; }
+
 .hidden { display: none !important; }
 
 .calendar-header {
@@ -105,7 +191,6 @@ body {
   justify-content: space-between;
   margin-bottom: 8px;
   font-weight: 600;
-  text-transform: capitalize;
 }
 .weekdays, .calendar-grid {
   display: grid;
@@ -255,6 +340,7 @@ body {
   align-items: center;
   gap: 10px;
 }
+#baterPontoBtn { flex-shrink: 0; }
 .primary-btn:disabled { background: var(--gray); color: #7d8985; cursor: not-allowed; }
 .primary-btn:not(:disabled):hover { background: var(--brand-dark); }
 .primary-btn .btn-icon { font-size: 22px; line-height: 1; flex-shrink: 0; }
@@ -466,7 +552,3 @@ body {
 
 .preview-box { background: var(--bg); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text); }
 .preview-box strong { font-weight: 600; }
-
-.app-footer { text-align: center; padding: 10px 0 14px; font-size: 10.5px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 4px; }
-.app-footer a { color: var(--orange); font-weight: 600; text-decoration: none; }
-.app-footer a:hover { text-decoration: underline; }

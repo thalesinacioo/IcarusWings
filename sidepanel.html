@@ -12,19 +12,37 @@
       <span class="dot"></span>
       <strong id="appTitle">Ponto Icarus</strong>
     </div>
-    <button id="refreshBtn" class="icon-btn" data-tooltip="Atualizar">⟳</button>
+    <div class="topbar-actions">
+      <button id="refreshBtn" class="icon-btn" data-tooltip="Atualizar">
+        <span class="refresh-icon">⟳</span>
+        <span class="refresh-check" aria-hidden="true">✓</span>
+      </button>
+      <button id="settingsBtn" class="icon-btn" data-tooltip="Configurações">⚙</button>
+    </div>
   </header>
+
+  <div id="settingsPopup" class="settings-popup hidden">
+    <label class="settings-row">
+      <input type="checkbox" id="almocoUmaHoraCheck" />
+      Faço intervalo de 1h no almoço
+    </label>
+    <label class="settings-row">
+      <input type="checkbox" id="jornada848Check" />
+      8:48 hoje
+    </label>
+    <div id="feriasFolgasList" class="ferias-list hidden"></div>
+    <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%; margin-top: 8px;">+ Férias / Folgas / Abono</button>
+    <div class="settings-popup-version"><span id="appVersion">—</span></div>
+  </div>
 
   <main id="app">
 
-    <section class="card">
-      <button id="baterPontoBtn" class="primary-btn">
-        <span class="btn-icon">◎</span>
-        <span class="btn-divider"></span>
-        <span class="btn-label">Bater o ponto agora!</span>
-        <span class="btn-emoji" aria-hidden="true">👍</span>
-      </button>
-    </section>
+    <button id="baterPontoBtn" class="primary-btn">
+      <span class="btn-icon">◎</span>
+      <span class="btn-divider"></span>
+      <span class="btn-label">Bater o ponto agora!</span>
+      <span class="btn-emoji" aria-hidden="true">👍</span>
+    </button>
 
     <section class="card" id="calendarCard">
       <div class="calendar-header">
@@ -45,7 +63,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card" id="dayPanelCard">
       <div class="day-panel-header">
         <div class="card-title" id="dayPanelTitle">Batidas de hoje</div>
         <button id="backToTodayBtn" class="link-btn hidden">← Voltar pra hoje</button>
@@ -91,31 +109,7 @@
       <p class="hint" id="periodoRange">—</p>
     </section>
 
-    <section class="card">
-      <button id="configToggle" class="card-title config-toggle" aria-expanded="false">
-        Funções extras <span id="configToggleIcon" class="config-toggle-icon">▸</span>
-      </button>
-      <div id="configOptions" class="hidden">
-        <label class="settings-row">
-          <input type="checkbox" id="almocoUmaHoraCheck" />
-          Faço intervalo de 1h no almoço
-        </label>
-        <label class="settings-row">
-          <input type="checkbox" id="jornada848Check" />
-          8:48 hoje
-        </label>
-
-        <div id="feriasFolgasList" class="ferias-list hidden"></div>
-        <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%; margin-top: 8px;">+ Férias / Folgas / Abono</button>
-      </div>
-    </section>
-
-    <section id="statusBox" class="status hidden"></section>
   </main>
-
-  <footer class="app-footer">
-    <span id="appVersion">—</span>
-  </footer>
 
   <div id="punchTimeModal" class="modal hidden">
     <div class="modal-box">
