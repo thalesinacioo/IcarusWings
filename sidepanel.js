@@ -1404,6 +1404,18 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   window.addEventListener("resize", () => {
     if (!$("#settingsPopup").classList.contains("hidden")) positionSettingsPopup();
+    if (notificationRows.size > 0) positionNotificationStack();
+  });
+  // O side panel do Chrome não recarrega ao fechar/reabrir — o JS continua
+  // rodando, só fica escondido. Um aviso que já estava de pé (ex.: "nova
+  // versão disponível") ficava com a posição antiga, calculada da última
+  // vez que o painel esteve visível — se o painel reabrir com outro
+  // tamanho, ele aparecia deslocado. Reposiciona sempre que volta a ficar
+  // visível, não só num resize.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    if (notificationRows.size > 0) positionNotificationStack();
+    if (!$("#settingsPopup").classList.contains("hidden")) positionSettingsPopup();
   });
 
   $("#addFeriasFolgasBtn").addEventListener("click", openFeriasFolgasModal);
