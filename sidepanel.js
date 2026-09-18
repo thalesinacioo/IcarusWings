@@ -39,6 +39,7 @@ const MISSING_PUNCH_GRACE_MIN = 60; // só avisa depois de 1h do horário espera
 const DEFAULT_JORNADA_MIN = 8 * 60; // meta do dia (08-12 + 13-17) quando o Icarus ainda não tem registro nenhum pro dia
 const MINUTOS_ABONO_POR_DIA_UTIL = 48; // regra do RH: teto de flexibilização = dias úteis do período × 48min
 const JORNADA_PADRAO_MIN = 8 * 60 + 48; // 8:48 — jornada padrão usada como base pra prever as batidas restantes do dia
+const JORNADA_6H_MIN = 6 * 60; // 6:00 — jornada reduzida, sem abono/flexibilização
 const GITHUB_REPO = "thalesinacioo/IcarusWings";
 
 // Intervalo de almoço usado na previsão — configurável (checkbox), 30min por
@@ -48,6 +49,16 @@ let almocoMinAtual = 30;
 // "8:48 hoje" — força a meta de hoje pra jornada padrão em vez do que o
 // Icarus calculou (ou 8h de fallback). Carregado no boot.
 let jornada848Ativo = false;
+
+// "Eu trabalho 6:00h/dia" — jornada reduzida, sem abono/flexibilização.
+// Mutuamente exclusivo com jornada848Ativo. Carregado no boot.
+let jornada6hAtivo = false;
+
+// Meta de minutos do dia usada nos cálculos "ao vivo" e na previsão das
+// batidas restantes — 6h, 8h48 ou 8h (padrão), nessa ordem de prioridade.
+function metaMinutosHoje() {
+  return jornada6hAtivo ? JORNADA_6H_MIN : jornada848Ativo ? JORNADA_PADRAO_MIN : DEFAULT_JORNADA_MIN;
+}
 
 let currentMonth = new Date().getMonth();
 let currentYear = new Date().getFullYear();
@@ -610,22 +621,28 @@ function renderFlexibilizacaoFromCache(start, end, tetoMin) {
   saldoEl.textContent = usadoMin !== null ? minutesToHHMM(usadoMin) : "--:--";
 
   saldoEl.classList.remove("status-green", "status-yellow", "status-red");
-  if (usadoMin !== null) {
+  if (usadoMin !== null && !jornada6hAtivo) {
     saldoEl.classList.add(usadoMin < abonoMin ? "status-green" : usadoMin === abonoMin ? "status-yellow" : "status-red");
   }
 
-  const explicacaoSaldo = "Cálculo de quantas horas você já utilizou do abono.";
   let avisoSaldo;
-  if (usadoMin !== null && usadoMin > abonoMin) {
-    if (periodoTemAjustePendente(start, end)) {
-      avisoSaldo = "Parece que tem ajustes pendentes, verifique com seu gestor.";
-    } else if (periodoTemDiaComPoucasBatidas(start, end)) {
-      avisoSaldo = "Verifique suas horas, você tem inconsistências.";
-    } else {
-      avisoSaldo = "Parece que suas horas estão abaixo do esperado, acho que você tem problemas.";
-    }
+  let explicacaoSaldo;
+  if (jornada6hAtivo) {
+    explicacaoSaldo = "Jornada de 6h/dia não tem abono nem teto de flexibilização — este é só o saldo real do Icarus.";
+    avisoSaldo = "Não se aplica à sua jornada.";
   } else {
-    avisoSaldo = "Suas horas estão dentro do esperado.";
+    explicacaoSaldo = "Cálculo de quantas horas você já utilizou do abono.";
+    if (usadoMin !== null && usadoMin > abonoMin) {
+      if (periodoTemAjustePendente(start, end)) {
+        avisoSaldo = "Parece que tem ajustes pendentes, verifique com seu gestor.";
+      } else if (periodoTemDiaComPoucasBatidas(start, end)) {
+        avisoSaldo = "Verifique suas horas, você tem inconsistências.";
+      } else {
+        avisoSaldo = "Parece que suas horas estão abaixo do esperado, acho que você tem problemas.";
+      }
+    } else {
+      avisoSaldo = "Suas horas estão dentro do esperado.";
+    }
   }
   $("#saldoHorasBox").dataset.tooltip = `${avisoSaldo}\n\n${explicacaoSaldo}`;
 }
@@ -651,7 +668,7 @@ function saldoHorasAtual() {
 function showFlexibilizacaoInstant() {
   const { start, end } = apuracaoPeriodFor(new Date(currentYear, currentMonth, 1));
   const diasUteis = countBusinessDays(start, end);
-  const tetoMin = diasUteis * MINUTOS_ABONO_POR_DIA_UTIL;
+  const tetoMin = jornada6hAtivo ? 0 : diasUteis * MINUTOS_ABONO_POR_DIA_UTIL;
   const fmtDDMM = (d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
   $("#periodoRange").innerHTML = `${fmtDDMM(start)} – ${fmtDDMM(end)} · ${diasUteis} dias úteis · Teto abono mês: <strong>${minutesToHHMM(tetoMin)}</strong>`;
   renderFlexibilizacaoFromCache(start, end, tetoMin);
@@ -1129,7 +1146,7 @@ function computeTotalsForDayPreview(key, seq, inputTimeStr) {
   // do que o Icarus calculou pro dia. Outro dia (não-hoje) continua usando
   // a meta real do Icarus, que já fechou e é autoritativa.
   const metaMin = isToday
-    ? (jornada848Ativo ? JORNADA_PADRAO_MIN : DEFAULT_JORNADA_MIN)
+    ? metaMinutosHoje()
     : ponto ? trabalhadoApiBase + (ponto.minutoFaltante || 0) : DEFAULT_JORNADA_MIN;
 
   return { worked: workedMin, remaining: Math.max(0, metaMin - workedMin) };
@@ -1237,7 +1254,7 @@ function tickLive() {
     : 0;
   // Meta de hoje é sempre fixa (8:00, ou 8:48 com "8:48 hoje" marcado) —
   // nunca depende do que o Icarus calculou pro dia, pra ficar previsível.
-  const metaMin = jornada848Ativo ? JORNADA_PADRAO_MIN : DEFAULT_JORNADA_MIN;
+  const metaMin = metaMinutosHoje();
 
   // sequência cronológica só dos instantes (reais visíveis + pendentes com
   // horário) — usada pro intervalo sempre (o Icarus não expõe esse número)
@@ -1280,7 +1297,7 @@ function tickLive() {
 
   // Base da meta usada nas previsões abaixo: 8:48 menos o abono do período,
   // ou 8:48 "seco" (sem descontar abono) quando "8:48 hoje" está marcado.
-  const metaMinPrevisao = jornada848Ativo ? JORNADA_PADRAO_MIN : DEFAULT_JORNADA_MIN;
+  const metaMinPrevisao = metaMinutosHoje();
 
   if (mergedTimes.length === 1) {
     const metadeMin = metaMinPrevisao / 2;
@@ -1385,7 +1402,25 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   $("#jornada848Check").addEventListener("change", async (ev) => {
     jornada848Ativo = ev.target.checked;
+    if (jornada848Ativo && jornada6hAtivo) {
+      jornada6hAtivo = false;
+      $("#jornada6hCheck").checked = false;
+      await IcarusAPI.setJornada6hConfig(false);
+    }
     await IcarusAPI.setJornada848Config(jornada848Ativo);
+    showFlexibilizacaoInstant();
+    tickLive();
+  });
+
+  $("#jornada6hCheck").addEventListener("change", async (ev) => {
+    jornada6hAtivo = ev.target.checked;
+    if (jornada6hAtivo && jornada848Ativo) {
+      jornada848Ativo = false;
+      $("#jornada848Check").checked = false;
+      await IcarusAPI.setJornada848Config(false);
+    }
+    await IcarusAPI.setJornada6hConfig(jornada6hAtivo);
+    showFlexibilizacaoInstant();
     tickLive();
   });
 
@@ -1450,6 +1485,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("#almocoUmaHoraCheck").checked = almocoMinAtual === 60;
   jornada848Ativo = await IcarusAPI.getJornada848Config();
   $("#jornada848Check").checked = jornada848Ativo;
+  jornada6hAtivo = await IcarusAPI.getJornada6hConfig();
+  $("#jornada6hCheck").checked = jornada6hAtivo;
+  showFlexibilizacaoInstant();
   tickLive();
   // 3) só então dispara a busca real (assíncrona) que atualiza os dias —
   // em sequência, não em paralelo, pra não disputar a mesma aba do Icarus

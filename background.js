@@ -35,6 +35,7 @@ const PUNCH_SCHEDULE = [
 // compartilhado via módulo) porque o service worker roda isolado do painel.
 const DEFAULT_JORNADA_MIN = 8 * 60; // 8:00
 const JORNADA_PADRAO_MIN = 8 * 60 + 48; // 8:48
+const JORNADA_6H_MIN = 6 * 60; // 6:00 — jornada reduzida, sem abono
 
 // Intervalo de almoço configurável (checkbox no painel) — 30min por padrão.
 // Igual à leitura em api.js (getAlmocoMinConfig), duplicada aqui porque o
@@ -49,6 +50,13 @@ async function getAlmocoMinConfig() {
 async function getJornada848Config() {
   const { jornada848Config } = await chrome.storage.local.get({ jornada848Config: false });
   return jornada848Config;
+}
+
+// "Eu trabalho 6:00h/dia" (checkbox no painel) — igual à leitura em api.js
+// (getJornada6hConfig), duplicada aqui pelo mesmo motivo acima.
+async function getJornada6hConfig() {
+  const { jornada6hConfig } = await chrome.storage.local.get({ jornada6hConfig: false });
+  return jornada6hConfig;
 }
 
 async function getTodayPonto() {
@@ -73,8 +81,12 @@ async function computePredictedPunchTimes() {
   // Meta de hoje é sempre fixa (8:00, ou 8:48 com "8:48 hoje" marcado) —
   // nunca depende do que o Icarus calculou pro dia, pra ficar previsível
   // (mesma regra do sidepanel.js).
-  const [jornada848, almocoMin] = await Promise.all([getJornada848Config(), getAlmocoMinConfig()]);
-  const metaMin = jornada848 ? JORNADA_PADRAO_MIN : DEFAULT_JORNADA_MIN;
+  const [jornada848, jornada6h, almocoMin] = await Promise.all([
+    getJornada848Config(),
+    getJornada6hConfig(),
+    getAlmocoMinConfig(),
+  ]);
+  const metaMin = jornada6h ? JORNADA_6H_MIN : jornada848 ? JORNADA_PADRAO_MIN : DEFAULT_JORNADA_MIN;
 
   if (times.length === 3) {
     const ponto = await getTodayPonto();
@@ -142,7 +154,8 @@ chrome.runtime.onStartup.addListener(() => {
 // Mudou o intervalo de almoço ou o "8:48 hoje" no painel (checkbox) —
 // recalcula os lembretes 10min/5min na hora, sem esperar a próxima batida real.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && (changes.almocoMinConfig || changes.jornada848Config)) scheduleDynamicPunchReminders();
+  if (area === "local" && (changes.almocoMinConfig || changes.jornada848Config || changes.jornada6hConfig))
+    scheduleDynamicPunchReminders();
 });
 
 // ---------- alarmes (agendamento diário) ----------

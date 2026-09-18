@@ -96,6 +96,17 @@ const IcarusAPI = {
     await chrome.storage.local.set({ jornada848Config: ativo });
   },
 
+  // "Eu trabalho 6:00h/dia" — jornada reduzida, sem abono/flexibilização.
+  // Mutuamente exclusivo com "8:48 hoje" (ver sidepanel.js). Só afeta a
+  // tela, não manda nada pro Icarus.
+  async getJornada6hConfig() {
+    const { jornada6hConfig } = await chrome.storage.local.get({ jornada6hConfig: false });
+    return jornada6hConfig;
+  },
+  async setJornada6hConfig(ativo) {
+    await chrome.storage.local.set({ jornada6hConfig: ativo });
+  },
+
   // Preenche o período na tela real e clica em "Pesquisar" — os dados
   // chegam de volta via o evento "icarus:observed" (resposta real do site).
   async searchPeriod(dataInicioDate, dataFimDate) {
