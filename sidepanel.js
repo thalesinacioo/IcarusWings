@@ -352,7 +352,7 @@ function renderFeriasFolgasList() {
     .sort((a, b) => a.inicio.localeCompare(b.inicio))
     .map((p) => {
       const periodo = p.inicio === p.fim ? fmtDDMMYYYY(p.inicio) : `${fmtDDMMYYYY(p.inicio)} – ${fmtDDMMYYYY(p.fim)}`;
-      return `<div class="ferias-item">
+      return `<div class="ferias-item ferias-item-${p.tipo}">
         <span class="ferias-item-text">${FERIAS_FOLGAS_LABEL[p.tipo]}, ${periodo}${p.nota ? ", " + p.nota : ""}</span>
         <button type="button" class="ferias-item-remove" data-id="${p.id}" title="Remover">✕</button>
       </div>`;
@@ -532,42 +532,6 @@ function apuracaoPeriodFor(date) {
   return { start, end };
 }
 
-// saldoTotal = créditos - débitos do período; abono é esse saldo quando
-// negativo (limitado ao teto). Extraído à parte pra poder ser reaproveitado
-// pela previsão das batidas de hoje (JORNADA_PADRAO_MIN - abono).
-function abonoMinForPeriod(start, end, tetoMin) {
-  let saldoTotal = 0;
-  const d = new Date(start);
-  while (d <= end) {
-    const ponto = registrosPorDia[dateKey(d)];
-    if (ponto) {
-      const extra = (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0);
-      saldoTotal += extra - (ponto.minutoFaltante || 0);
-    }
-    d.setDate(d.getDate() + 1);
-  }
-  return saldoTotal < 0 ? Math.min(-saldoTotal, tetoMin) : 0;
-}
-
-// Abono só dos dias FECHADOS (até ontem) do período. Incluir hoje deixaria o
-// saldo artificialmente negativo enquanto o dia ainda está em andamento
-// (minutoFaltante de hoje aparece quase inteiro com só 1-2 batidas) — usado
-// tanto pelo card "Abono estimado" quanto pela previsão de hoje abaixo.
-function abonoMinFechado(start, end, tetoMin) {
-  const ontem = new Date();
-  ontem.setDate(ontem.getDate() - 1);
-  if (ontem < start) return 0; // hoje é o 1º dia do período, sem dias fechados ainda
-  return abonoMinForPeriod(start, ontem < end ? ontem : end, tetoMin);
-}
-
-function parseHHMMToMinutes(str) {
-  if (typeof str !== "string") return null;
-  const m = /^(-?)(\d+):(\d{2})$/.exec(str.trim());
-  if (!m) return null;
-  const sign = m[1] === "-" ? -1 : 1;
-  return sign * (Number(m[2]) * 60 + Number(m[3]));
-}
-
 // Ajuste pendente em qualquer dia do período: solicitação real no Icarus
 // ainda aguardando o gestor, OU lembrete local da extensão ("ajustar
 // depois"/horário aproximado ainda não registrado).
@@ -600,39 +564,35 @@ function periodoTemDiaComPoucasBatidas(start, end) {
 }
 
 function renderFlexibilizacaoFromCache(start, end, tetoMin) {
-  let workedTotal = 0;
-  const d = new Date(start);
-  while (d <= end) {
-    const ponto = registrosPorDia[dateKey(d)];
-    if (ponto) {
-      const extra = (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0);
-      workedTotal += (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) + extra;
-    }
-    d.setDate(d.getDate() + 1);
-  }
-  const abonoMin = abonoMinFechado(start, end, tetoMin);
-  $("#periodoWorkedTotal").textContent = minutesToHHMM(workedTotal);
-  $("#abonoEstimado").textContent = minutesToHHMM(abonoMin);
+  $("#tetoAbonoMes").textContent = minutesToHHMM(tetoMin);
 
   const saldoEl = $("#saldoHoras");
-  const saldo = saldoHorasAtual();
-  const saldoMin = parseHHMMToMinutes(saldo);
-  const usadoMin = saldoMin !== null ? Math.max(0, -saldoMin) : null;
-  saldoEl.textContent = usadoMin !== null ? minutesToHHMM(usadoMin) : "--:--";
+  const { faltanteTotal: usadoMin, extraTotal: extraMin } = saldoLocalNoPeriodo(start, end);
+  saldoEl.textContent = minutesToHHMM(usadoMin);
+
+  // Abono estimado = soma de 48min por dia útil já decorrido no período
+  // (do início até hoje, ou até o fim se o período já fechou), limitado ao
+  // teto do período inteiro.
+  const hojeMeiaNoite = new Date();
+  hojeMeiaNoite.setHours(0, 0, 0, 0);
+  const fimDecorrido = hojeMeiaNoite < end ? hojeMeiaNoite : end;
+  const diasUteisDecorridos = fimDecorrido < start ? 0 : countBusinessDays(start, fimDecorrido);
+  const abonoMin = Math.min(diasUteisDecorridos * MINUTOS_ABONO_POR_DIA_UTIL, tetoMin);
+  $("#abonoEstimado").textContent = minutesToHHMM(abonoMin);
 
   saldoEl.classList.remove("status-green", "status-yellow", "status-red");
-  if (usadoMin !== null && !jornada6hAtivo) {
+  if (!jornada6hAtivo) {
     saldoEl.classList.add(usadoMin < abonoMin ? "status-green" : usadoMin === abonoMin ? "status-yellow" : "status-red");
   }
 
   let avisoSaldo;
   let explicacaoSaldo;
   if (jornada6hAtivo) {
-    explicacaoSaldo = "Jornada de 6h/dia não tem abono nem teto de flexibilização — este é só o saldo real do Icarus.";
+    explicacaoSaldo = "Jornada de 6h/dia não tem abono nem teto de flexibilização — este é só quanto você já ficou devendo, calculado com base nas suas batidas.";
     avisoSaldo = "Não se aplica à sua jornada.";
   } else {
-    explicacaoSaldo = "Cálculo de quantas horas você já utilizou do abono.";
-    if (usadoMin !== null && usadoMin > abonoMin) {
+    explicacaoSaldo = "Cálculo de quantas horas você já utilizou do abono, com base nas suas batidas anotadas na extensão.";
+    if (usadoMin > abonoMin) {
       if (periodoTemAjustePendente(start, end)) {
         avisoSaldo = "Parece que tem ajustes pendentes, verifique com seu gestor.";
       } else if (periodoTemDiaComPoucasBatidas(start, end)) {
@@ -640,6 +600,8 @@ function renderFlexibilizacaoFromCache(start, end, tetoMin) {
       } else {
         avisoSaldo = "Parece que suas horas estão abaixo do esperado, acho que você tem problemas.";
       }
+    } else if (extraMin > 0) {
+      avisoSaldo = "Você tem saldo de horas positivas.";
     } else {
       avisoSaldo = "Suas horas estão dentro do esperado.";
     }
@@ -647,16 +609,71 @@ function renderFlexibilizacaoFromCache(start, end, tetoMin) {
   $("#saldoHorasBox").dataset.tooltip = `${avisoSaldo}\n\n${explicacaoSaldo}`;
 }
 
-// Saldo de horas de HOJE, direto do próprio Icarus (ponto.tempoSaldo — já
-// vinha só no tooltip do calendário). Se hoje ainda não tem esse campo
-// calculado (sem batida ainda), usa o do último dia anterior que tiver.
-function saldoHorasAtual() {
-  const todayKey = dateKey(new Date());
-  if (registrosPorDia[todayKey]?.tempoSaldo) return registrosPorDia[todayKey].tempoSaldo;
-  const keysComSaldo = Object.keys(registrosPorDia)
-    .filter((k) => k <= todayKey && registrosPorDia[k]?.tempoSaldo)
-    .sort();
-  return keysComSaldo.length ? registrosPorDia[keysComSaldo[keysComSaldo.length - 1]].tempoSaldo : null;
+// Meta de minutos esperada num dia, só com dados locais: dia útil (sem
+// feriado nacional) e sem estar marcado como férias/folga/abono na
+// extensão. Não usa o que o Icarus decidiu que era a meta do dia.
+function metaLocalDoDia(key, holidays) {
+  if (feriasFolgaParaDia(key)) return 0;
+  if (!isBusinessDay(keyToDate(key), holidays)) return 0;
+  return jornada6hAtivo ? JORNADA_6H_MIN : DEFAULT_JORNADA_MIN;
+}
+
+// Minutos efetivamente trabalhados num dia, somando só os pares
+// entrada/saída das batidas reais + ajustes pendentes anotados na
+// extensão — não usa nenhum total pronto do Icarus, que pode estar
+// defasado enquanto um ajuste ainda aguarda aprovação do gestor.
+function minutosTrabalhadosLocalNoDia(key) {
+  const ponto = registrosPorDia[key];
+  const diaPending = pendingAdjustments[key] || [];
+  // "done" (não-delete) significa que o Icarus já tem batida real cobrindo
+  // esse horário informado (reconcilePendingAdjustments em background.js) —
+  // incluir o horário aproximado de novo aqui duplicaria a batida real já
+  // presente em `ordenadas`, bagunçando o pareamento entrada/saída.
+  const diaPendingMissing = diaPending.filter((p) => p.type !== "delete" && !p.done);
+  const diaPendingDelete = diaPending.filter((p) => p.type === "delete");
+  const ordenadas = batidasOrdenadas(ponto).filter((b) => !diaPendingDelete.some((p) => p.horarioMs === b.horario));
+  const merged = mergedPunchesForDay(key, ordenadas, diaPendingMissing).map((item) => item.timeMs);
+  let worked = 0;
+  for (let i = 0; i + 1 < merged.length; i += 2) worked += (merged[i + 1] - merged[i]) / 60000;
+  return worked;
+}
+
+// Abono do período (card "Abono") = soma das horas faltantes de cada dia já
+// fechado (até ontem — hoje ainda em andamento ficaria artificialmente
+// negativo), tudo calculado com base nas batidas anotadas na extensão.
+// Também soma à parte as horas extras (dias que passaram da meta), só pra
+// avisar quando há saldo positivo acumulado — não abate do abono devido.
+function saldoLocalNoPeriodo(start, end) {
+  const hojeMeiaNoite = new Date();
+  hojeMeiaNoite.setHours(0, 0, 0, 0);
+  const ontem = new Date(hojeMeiaNoite);
+  ontem.setDate(ontem.getDate() - 1);
+  const fimFechado = ontem < end ? ontem : end;
+  if (fimFechado < start) return { faltanteTotal: 0, extraTotal: 0 };
+
+  const holidays = new Set();
+  for (let y = start.getFullYear(); y <= fimFechado.getFullYear(); y++) nationalHolidaySet(y).forEach((k) => holidays.add(k));
+
+  let faltanteTotal = 0;
+  let extraTotal = 0;
+  const d = new Date(start);
+  while (d <= fimFechado) {
+    const key = dateKey(d);
+    // Sem nenhuma batida (real ou anotada) pro dia, não dá pra saber se
+    // faltou ou não — não conta como falta só por falta de dado em cache
+    // (ex: mês ainda não sincronizado), senão qualquer dia sem sync vira
+    // um dia inteiro de "abono usado" por engano.
+    if (registrosPorDia[key] || (pendingAdjustments[key] || []).length > 0) {
+      const meta = metaLocalDoDia(key, holidays);
+      if (meta > 0) {
+        const trabalhado = minutosTrabalhadosLocalNoDia(key);
+        faltanteTotal += Math.max(0, meta - trabalhado);
+        extraTotal += Math.max(0, trabalhado - meta);
+      }
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return { faltanteTotal, extraTotal };
 }
 
 // Mostra período/teto/valores na hora com o que já tiver em cache — sem
@@ -670,7 +687,7 @@ function showFlexibilizacaoInstant() {
   const diasUteis = countBusinessDays(start, end);
   const tetoMin = jornada6hAtivo ? 0 : diasUteis * MINUTOS_ABONO_POR_DIA_UTIL;
   const fmtDDMM = (d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-  $("#periodoRange").innerHTML = `${fmtDDMM(start)} – ${fmtDDMM(end)} · ${diasUteis} dias úteis · Teto abono mês: <strong>${minutesToHHMM(tetoMin)}</strong>`;
+  $("#periodoRange").textContent = `${fmtDDMM(start)} – ${fmtDDMM(end)} · ${diasUteis} dias úteis`;
   renderFlexibilizacaoFromCache(start, end, tetoMin);
   return { start, end, tetoMin };
 }
@@ -832,9 +849,10 @@ function renderCalendar() {
     const ponto = registrosPorDia[key];
     const ferias = feriasFolgaParaDia(key);
     // Prioridade: classificação real do Icarus (roxo/vermelho/verde) primeiro;
-    // depois férias/folga/abono programado (rosa); feriado é o "chão", só
-    // aparece cinza quando não tem nenhuma classificação mais importante.
-    const cls = classifyDay(ponto, key === todayKey) || (ferias ? "ferias" : null) || (holidays.has(key) ? "holiday" : null);
+    // depois férias/folga/abono programado (ciano/azul-escuro/preto); feriado
+    // é o "chão", só aparece cinza quando não tem nenhuma classificação mais
+    // importante.
+    const cls = classifyDay(ponto, key === todayKey) || (ferias ? ferias.tipo : null) || (holidays.has(key) ? "holiday" : null);
     const hasPending = (pendingAdjustments[key] || []).length > 0;
     const isSelected = selectedDayKey ? key === selectedDayKey : key === todayKey;
     const cell = document.createElement("div");
@@ -1024,7 +1042,9 @@ function renderDayPanel() {
     tickLive();
     liveTimer = setInterval(tickLive, 30000);
   } else {
-    const diaPendingComHorarioSel = diaPendingMissing.filter((p) => p.approxTime);
+    // Ignora ajustes já marcados "done" (Icarus já tem batida real cobrindo
+    // o horário informado) — senão duplicaria essa batida no total.
+    const diaPendingComHorarioSel = diaPendingMissing.filter((p) => p.approxTime && !p.done);
     const mergedTimesSel = ponto ? mergedPunchesForDay(key, ordenadasVisiveis, diaPendingComHorarioSel).map((item) => item.timeMs) : [];
     const temOverrideLocal = diaPendingComHorarioSel.length > 0 || diaPendingDelete.length > 0;
 

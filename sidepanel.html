@@ -63,7 +63,9 @@
         <span class="legend-swatch purple" tabindex="0" data-tooltip="Ajuste manual"></span>
         <span class="legend-swatch orange" tabindex="0" data-tooltip="Ajuste pendente"></span>
         <span class="legend-swatch holiday" tabindex="0" data-tooltip="Feriado"></span>
-        <span class="legend-swatch pink" tabindex="0" data-tooltip="Férias/Folgas programadas"></span>
+        <span class="legend-swatch ferias" tabindex="0" data-tooltip="Férias programadas"></span>
+        <span class="legend-swatch folga" tabindex="0" data-tooltip="Folga programada"></span>
+        <span class="legend-swatch abono" tabindex="0" data-tooltip="Abono programado"></span>
       </div>
     </section>
 
@@ -101,14 +103,14 @@
       <div class="card-title">Flexibilização do mês <span class="wip-tag">(ainda em construção)</span></div>
       <div class="period-summary">
         <div class="period-summary-item" id="saldoHorasBox" tabindex="0">
-          <span class="hs-label">Saldo de Horas</span>
+          <span class="hs-label">Abono</span>
           <span id="saldoHoras" class="hs-value">--:--</span>
         </div>
-        <div class="period-summary-item" id="abonoEstimadoBox" tabindex="0" data-tooltip="Esse é o quanto de horas que você ainda tem de abono se você faz 08h/dia.">
+        <div class="period-summary-item" id="abonoEstimadoBox" tabindex="0" data-tooltip="Esse é o máximo de horas de abono que você pode utilizar até agora.">
           <span class="hs-label">Abono estimado</span>
           <span id="abonoEstimado" class="hs-value">--:--</span>
         </div>
-        <div><span class="hs-label">Horas do Mês</span><span id="periodoWorkedTotal" class="hs-value">--:--</span></div>
+        <div><span class="hs-label">Teto Abono Mês</span><span id="tetoAbonoMes" class="hs-value">--:--</span></div>
       </div>
       <p class="hint" id="periodoRange">—</p>
     </section>

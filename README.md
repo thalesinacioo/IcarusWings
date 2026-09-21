@@ -96,32 +96,32 @@ período**. Por exemplo, num período com 22 dias úteis, o teto é
 22 × 48min = 17h36min de abono disponíveis pra usar no mês inteiro.
 
 No card você vê:
-- **Teto abono mês** (na frase abaixo dos números, em negrito) — o limite
-  calculado pro período que está sendo exibido no calendário (se você
-  navegar pro mês passado ou pro próximo, o card recalcula sozinho pra
-  aquele período).
-- **Saldo de Horas** — quanto desse abono você **já usou** até agora.
-  Nunca aparece negativo (é sempre "quanto já foi gasto", não "quanto
-  falta"). A cor avisa como você está:
-  - 🟢 verde — usando menos que o teto, tranquilo
-  - 🟡 amarelo — bateu exatamente no teto
-  - 🔴 vermelho — passou do teto — vale conversar com seu gestor
-- **Abono estimado** — quanto de abono a extensão calcula que você
-  "acumulou" nos dias já fechados do período (dias passados, contando os
-  minutos que faltaram e as horas extras de cada um).
-- **Horas do Mês** — total de horas trabalhadas somando o período inteiro.
+- **Teto Abono Mês** — o limite calculado pro período que está sendo
+  exibido no calendário (se você navegar pro mês passado ou pro próximo,
+  o card recalcula sozinho pra aquele período).
+- **Abono** — quanto desse abono você **já usou** até agora, calculado
+  com base nas suas próprias batidas anotadas na extensão (não no total
+  pronto do Icarus, que pode estar defasado enquanto algum ajuste ainda
+  aguarda aprovação do gestor). Nunca aparece negativo (é sempre "quanto
+  já foi gasto", não "quanto falta"). A cor avisa como você está:
+  - 🟢 verde — usando menos que o abono já acumulado, tranquilo
+  - 🟡 amarelo — bateu exatamente no abono já acumulado
+  - 🔴 vermelho — passou do abono já acumulado — vale conversar com seu gestor
+- **Abono estimado** — o máximo de horas de abono que você pode usar até
+  agora: soma de 48min por dia útil já decorrido no período, limitado ao
+  teto do mês inteiro.
 
-Passe o mouse em "Saldo de Horas" pra ver um aviso explicando esse
-cálculo, e se há algo que merece atenção (ajustes pendentes, poucas
-batidas registradas, etc.).
+Passe o mouse em "Abono" pra ver um aviso explicando esse cálculo, e se
+há algo que merece atenção (ajustes pendentes, poucas batidas
+registradas, etc.).
 
 **Trabalha 6h/dia?** Quem tem jornada reduzida não tem direito a abono.
 Marcando "Eu trabalho 6:00h/dia" nas configurações (⚙): o Teto e o Abono
-estimado ficam zerados, o Saldo de Horas passa a mostrar o valor real do
-Icarus sem as cores (não fazem sentido sem teto), e a previsão de saída
-passa a considerar 3h de trabalho antes do almoço e 3h depois (em vez de
-4h+4h). O checkbox é exclusivo com "8:48 hoje" — marcar um desmarca o
-outro.
+estimado ficam zerados, o card "Abono" passa a mostrar só quanto você
+ficou devendo (calculado com base nas suas batidas), sem as cores (não
+fazem sentido sem teto), e a previsão de saída passa a considerar 3h de
+trabalho antes do almoço e 3h depois (em vez de 4h+4h). O checkbox é
+exclusivo com "8:48 hoje" — marcar um desmarca o outro.
 
 ### Avisos flutuantes (balões)
 

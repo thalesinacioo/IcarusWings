@@ -12,7 +12,9 @@
   --purple: #8b5cf6;
   --gray: #cfd6d3;
   --orange: #f97316;
-  --pink: #ec4899;
+  --cyan: #06b6d4;
+  --navy: #1e3a8a;
+  --black: #111318;
   --yellow: #eab308;
   --tooltip-bg: #1c2422;
   --tooltip-text: #f5f7f6;
@@ -218,7 +220,9 @@ a.notification-row-text:hover { text-decoration: underline; }
 .calendar-grid .day.red .chip { background: var(--red); color: #fff; }
 .calendar-grid .day.purple .chip { background: var(--purple); color: #fff; }
 .calendar-grid .day.holiday .chip { background: var(--muted); color: #fff; }
-.calendar-grid .day.ferias .chip { background: var(--pink); color: #fff; }
+.calendar-grid .day.ferias .chip { background: var(--cyan); color: #fff; }
+.calendar-grid .day.folga .chip { background: var(--navy); color: #fff; }
+.calendar-grid .day.abono .chip { background: var(--black); color: #fff; }
 .calendar-grid .day.today .chip { outline: 2px solid var(--brand); outline-offset: 1px; }
 .calendar-grid .day.selected .chip { box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--text); }
 .calendar-grid .day.has-pending .chip { position: relative; }
@@ -245,7 +249,9 @@ a.notification-row-text:hover { text-decoration: underline; }
 .legend-swatch.purple { background: var(--purple); }
 .legend-swatch.orange { background: var(--orange); }
 .legend-swatch.holiday { background: var(--muted); }
-.legend-swatch.pink { background: var(--pink); }
+.legend-swatch.ferias { background: var(--cyan); }
+.legend-swatch.folga { background: var(--navy); }
+.legend-swatch.abono { background: var(--black); }
 
 .punches {
   display: grid;
@@ -418,17 +424,20 @@ a.notification-row-text:hover { text-decoration: underline; }
 .ferias-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .ferias-item {
   font-size: 11px;
-  color: var(--pink);
-  background: color-mix(in srgb, var(--pink) 8%, transparent);
-  border: 1px dashed var(--pink);
+  color: var(--item-color);
+  background: color-mix(in srgb, var(--item-color) 8%, transparent);
+  border: 1px dashed var(--item-color);
   border-radius: 8px;
   padding: 6px 8px;
   display: flex;
   align-items: center;
   gap: 6px;
 }
+.ferias-item-ferias { --item-color: var(--cyan); }
+.ferias-item-folga { --item-color: var(--navy); }
+.ferias-item-abono { --item-color: var(--black); }
 .ferias-item-text { flex: 1; }
-.ferias-item-remove { background: none; border: none; color: var(--pink); font-size: 12px; cursor: pointer; padding: 0 0 0 6px; flex-shrink: 0; }
+.ferias-item-remove { background: none; border: none; color: var(--item-color); font-size: 12px; cursor: pointer; padding: 0 0 0 6px; flex-shrink: 0; }
 .pending-cancel { background: none; border: none; color: var(--orange); font-size: 12px; cursor: pointer; padding: 0 0 0 6px; flex-shrink: 0; }
 .pending-cancel:hover { color: var(--red); }
 
