@@ -201,7 +201,48 @@ async function findIcarusTabId() {
   return tabs[0]?.id ?? null;
 }
 
-function waitForTabComplete(tabId, timeout = 15000) {
+async function closeAllIcarusTabs() {
+  let ids = [];
+  try {
+    ids = (await chrome.tabs.query({ url: ICARUS_URL_PATTERN })).map((t) => t.id).filter((id) => id != null);
+  } catch (_) {
+    return;
+  }
+  if (!ids.length) return;
+  try {
+    await chrome.tabs.remove(ids);
+  } catch (_) {
+    // uma das abas já pode ter sido fechada na mão — remove.tabs falha em
+    // lote se qualquer id já não existir mais, então tenta uma a uma
+    await Promise.allSettled(ids.map((id) => chrome.tabs.remove(id)));
+  }
+}
+
+// ---------- fecha a aba do Icarus quando o painel fecha ----------
+// O painel conecta uma porta nomeada assim que abre. Fechar o painel (✕ do
+// Chrome) derruba a porta; suspender/reiniciar o service worker TAMBÉM
+// derruba a porta mesmo com o painel ainda aberto — por isso não fechamos
+// na hora: esperamos PANEL_CLOSE_GRACE_MS pra dar tempo do mesmo painel
+// reconectar (ele reconecta sozinho, ver sidepanel.js). Só fecha as abas se
+// o id daquele painel específico não voltar a aparecer nesse intervalo.
+const SIDEPANEL_PORT_PREFIX = `${MSG_NS}:sidepanel:`;
+const PANEL_CLOSE_GRACE_MS = 1500;
+const painelVivo = new Set();
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (!port.name.startsWith(SIDEPANEL_PORT_PREFIX)) return;
+  const panelId = port.name.slice(SIDEPANEL_PORT_PREFIX.length);
+  painelVivo.add(panelId);
+  port.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError; // evita "Unchecked runtime.lastError" no console
+    painelVivo.delete(panelId);
+    setTimeout(() => {
+      if (!painelVivo.has(panelId)) closeAllIcarusTabs();
+    }, PANEL_CLOSE_GRACE_MS);
+  });
+});
+
+function waitForTabComplete(tabId, timeout = 10000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
@@ -257,7 +298,7 @@ async function sendToTab(msg) {
   try {
     tabId = await ensureIcarusTab();
   } catch (err) {
-    return { ok: false, error: String(err?.message || err) };
+    return { ok: false, code: "TAB_LOAD_TIMEOUT", error: String(err?.message || err) };
   }
   try {
     await chrome.tabs.sendMessage(tabId, msg);
@@ -267,13 +308,21 @@ async function sendToTab(msg) {
   }
   const injected = await ensureInjected(tabId);
   if (!injected) {
-    return { ok: false, error: "Não consegui me conectar à aba do Icarus. Recarregue a aba (F5) e tente de novo." };
+    return {
+      ok: false,
+      code: "TAB_UNREACHABLE",
+      error: "Não consegui me conectar à aba do Icarus. Recarregue a aba (F5) e tente de novo.",
+    };
   }
   try {
     await chrome.tabs.sendMessage(tabId, msg);
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: "Ainda não consegui me conectar à aba do Icarus. Recarregue a aba (F5) e tente de novo." };
+    return {
+      ok: false,
+      code: "TAB_UNREACHABLE",
+      error: "Ainda não consegui me conectar à aba do Icarus. Recarregue a aba (F5) e tente de novo.",
+    };
   }
 }
 
@@ -385,10 +434,27 @@ chrome.runtime.onMessage.addListener((msg) => {
         forwardToSidepanel({
           source: MSG_NS,
           type: "UI_ACTION_RESULT",
-          payload: { requestId: msg.payload.requestId, ok: false, error: res.error },
+          payload: { requestId: msg.payload.requestId, ok: false, code: res.code, error: res.error },
         });
       }
     });
+    return;
+  }
+
+  if (msg.type === "FOCUS_ICARUS_TAB") {
+    // "Fazer login" no balão de erro: traz a aba do Icarus pra frente na
+    // janela atual (ou abre uma nova) — nunca loga sozinho, só dá acesso.
+    (async () => {
+      const current = await chrome.windows.getCurrent().catch(() => null);
+      const all = await chrome.tabs.query({ url: ICARUS_URL_PATTERN });
+      const tab = (current && all.find((t) => t.windowId === current.id)) || all[0];
+      if (tab) {
+        await chrome.tabs.update(tab.id, { active: true, pinned: false }).catch(() => {});
+        await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+      } else {
+        await chrome.tabs.create({ url: "https://web.pontoicarus.com.br/ponto", active: true }).catch(() => {});
+      }
+    })();
     return;
   }
 });

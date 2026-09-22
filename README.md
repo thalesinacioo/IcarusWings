@@ -28,7 +28,8 @@ automatiza a interface que você já usa manualmente — de um jeito que
   (não usa mais um aviso separado pra isso).
 - **Botão de engrenagem (⚙)** — abre um popup com:
   - Checkbox "Faço intervalo de 1h no almoço"
-  - Checkbox "8:48 hoje" (jornada estendida só por hoje)
+  - Checkbox "8:48 hoje" (mirar na jornada contratada cheia hoje, em vez de
+    usar o abono diário — ver "Flexibilização do mês" abaixo)
   - Checkbox "Eu trabalho 6:00h/dia" (jornada reduzida, sem abono — ver
     "Flexibilização do mês" abaixo)
   - "+ Férias / Folgas / Abono" — marca um período no calendário (rosa),
@@ -66,11 +67,15 @@ popup — o título mostra o dia da semana por extenso (ex.: "Batidas de
 quarta-feira, 16/09").
 
 - as 4 batidas (1ª a 4ª), com asterisco/roxo pra batidas que foram ajuste
-  manual no Icarus (mostra o motivo escrito no ajuste)
-- trabalhado / intervalo / falta trabalhar — **ao vivo**, quando é hoje:
-  se o turno está aberto (número ímpar de batidas), conta o tempo corrido
-  desde a última batida; o intervalo soma só as pausas entre batidas
-  (ex.: o almoço), nunca o trecho ainda em aberto
+  manual no Icarus (mostra o motivo escrito no ajuste) — essas sempre vêm
+  direto do Icarus, é a fonte da verdade do horário real
+- trabalhado / intervalo / falta trabalhar — de **qualquer dia**, não só
+  hoje, sempre calculado a partir das batidas + ajustes anotados na
+  extensão, nunca do total pronto do Icarus (que pode não bater com a meta
+  que você está mirando naquele dia — ver "8:48 hoje" abaixo). Quando é
+  hoje, é **ao vivo**: se o turno está aberto (número ímpar de batidas),
+  conta o tempo corrido desde a última batida; o intervalo soma só as
+  pausas entre batidas (ex.: o almoço), nunca o trecho ainda em aberto
 - previsão de horário de saída (em cinza, "~HH:MM") na 4ª batida, enquanto
   ela ainda não aconteceu de verdade — some assim que a batida real (ou
   pendente) ocupar o lugar
@@ -84,12 +89,15 @@ quarta-feira, 16/09").
 
 Essa é a parte que mais gera dúvida, então vamos com calma, do zero:
 
-No Icarus, seu "período de apuração" não é o mês do calendário — vai do
-dia **26 de um mês até o dia 25 do mês seguinte**. Dentro desse período,
-a empresa permite que, se em alguns dias você tiver trabalhado um pouco
-menos do que devia, isso seja **perdoado** (não desconta do seu banco de
-horas nem do salário) — desde que, somando tudo, você não ultrapasse um
-limite. Esse "perdão" se chama **abono**, e o limite se chama **teto**.
+A jornada contratada é **8h48/dia**, mas o RH dá um abono fixo de
+**48min/dia** que perdoa a diferença se você trabalhar só 8h — sem
+descontar salário nem banco de horas. É uma escolha sua, dia a dia: pode
+mirar em 8h (usando o abono) ou nos 8h48 completos (e aí guardar essa
+diferença como folga). Só que esse abono tem um limite mensal, senão
+alguém poderia "usar" ele todo santo dia: no Icarus, seu "período de
+apuração" não é o mês do calendário — vai do dia **26 de um mês até o dia
+25 do mês seguinte** —, e o limite (**teto**) é somado dentro desse
+período.
 
 O teto é calculado assim: **48 minutos × quantidade de dias úteis do
 período**. Por exemplo, num período com 22 dias úteis, o teto é
@@ -132,6 +140,15 @@ aviso de nova versão — com uma setinha indicando de qual botão ele veio.
 Se tiver mais de um ao mesmo tempo, eles empilham um abaixo do outro,
 sempre alinhados pela borda direita. Avisos rápidos (tipo "buscando...")
 somem sozinhos; os demais ficam até você clicar no "✕".
+
+### Erros de busca (e detecção de "não logado")
+
+Se a busca falhar, o balão diz a causa específica em vez de um erro
+genérico — por exemplo "Você não está logado no Icarus" (com um link
+"Clique aqui pra fazer login" que foca a aba do Icarus na sua janela
+atual, sem logar sozinho), "A aba do Icarus não está na tela de Registro
+de Ponto", ou "O Icarus pode ter mudado o layout". Assim que uma busca
+funcionar de novo, o aviso some sozinho.
 
 ### Lembretes de bater ponto
 
@@ -192,6 +209,9 @@ respostas que o site já recebe, pra extrair os dados pro painel.
 Você não precisa abrir/gerenciar essa aba: quando o painel (ou um
 lembrete) precisa de dados e não há nenhuma aba do Icarus aberta, a
 própria extensão abre uma, fixada e em segundo plano, sem tirar seu foco.
+E ao fechar o painel, a extensão fecha essa aba sozinha — útil pra quem
+trabalha com várias janelas do navegador abertas e não quer abas do
+Icarus se acumulando espalhadas.
 
 ## Como instalar (modo desenvolvedor)
 

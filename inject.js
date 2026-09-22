@@ -89,6 +89,65 @@ async function waitFor(predicate, { timeout = 4000, interval = 100 } = {}) {
   return null;
 }
 
+// Erro com código, pra o painel distinguir "não logado" de "página ainda
+// carregando" de "Icarus mudou o markup" — hoje tudo isso virava a mesma
+// mensagem genérica no balão.
+function uiError(code, message) {
+  const e = new Error(message);
+  e.code = code;
+  return e;
+}
+
+// Corre vários predicados no mesmo tick; devolve o nome do primeiro que bater.
+async function waitForAny(predicates, { timeout = 6000, interval = 150 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    for (const [name, fn] of Object.entries(predicates)) {
+      try {
+        if (fn()) return name;
+      } catch (_) {}
+    }
+    await sleep(interval);
+  }
+  return null;
+}
+
+const PONTO_PATH = /^\/ponto(\/|$)/;
+
+// Exige o campo de senha em DOIS ciclos seguidos: no redirect login -> /ponto
+// logo depois de logar, o campo some em ~1 tick e um check único daria
+// "não logado" falso.
+let __pwdStreak = 0;
+function looksLikeLogin() {
+  const temSenha = Array.from(document.querySelectorAll('input[type="password"]')).some(
+    (i) => i.offsetParent !== null
+  );
+  __pwdStreak = temSenha ? __pwdStreak + 1 : 0;
+  return __pwdStreak >= 2;
+}
+
+// Roda antes de QUALQUER ação de UI: garante que a aba está logada e na tela
+// de Registro de Ponto antes de procurar elementos específicos da ação —
+// senão "não achei o campo X" fica ambíguo entre "não logado", "página
+// errada", "ainda carregando" e "Icarus mudou o markup".
+async function requirePontoPage() {
+  __pwdStreak = 0;
+  const hit = await waitForAny(
+    {
+      login: looksLikeLogin,
+      ready: () => PONTO_PATH.test(location.pathname) && document.querySelector("button"),
+    },
+    { timeout: 6000 }
+  );
+
+  if (hit === "ready") return;
+  if (hit === "login") throw uiError("NOT_LOGGED_IN", "Você não está logado no Icarus.");
+  if (!PONTO_PATH.test(location.pathname)) {
+    throw uiError("WRONG_ROUTE", `A aba do Icarus está em outra tela (${location.pathname}).`);
+  }
+  throw uiError("PAGE_NOT_READY", "A página do Icarus ainda não terminou de carregar.");
+}
+
 // Muitos botões de ação (linha da tabela: "Notas", "Justificar Ponto",
 // "Reprocessar Ponto"...) são só ícone — sem NENHUM texto visível, o nome
 // "Justificar Ponto" etc. só existe no atributo `title` (tooltip). Por isso
@@ -127,8 +186,16 @@ function setNativeTextareaValue(textarea, value) {
 }
 
 async function uiSearch({ dataInicioDDMMYYYY, dataFimDDMMYYYY }) {
-  const dateInputs = Array.from(document.querySelectorAll('input[placeholder="DD/MM/YYYY"]'));
-  if (dateInputs.length < 2) throw new Error("Campos de período não encontrados na página.");
+  const dateInputs = await waitFor(() => {
+    const els = Array.from(document.querySelectorAll('input[placeholder="DD/MM/YYYY"]'));
+    return els.length >= 2 ? els : null;
+  });
+  if (!dateInputs) {
+    throw uiError(
+      "SEARCH_FIELDS_MISSING",
+      "Os campos de período não apareceram na tela de ponto. O Icarus pode ter mudado o layout."
+    );
+  }
   setNativeInputValue(dateInputs[0], dataInicioDDMMYYYY);
   await sleep(150);
   setNativeInputValue(dateInputs[1], dataFimDDMMYYYY);
@@ -136,7 +203,7 @@ async function uiSearch({ dataInicioDDMMYYYY, dataFimDDMMYYYY }) {
   document.body.click(); // fecha eventual calendário popup
   await sleep(150);
   const searchBtn = findButtonByText("Pesquisar");
-  if (!searchBtn) throw new Error('Botão "Pesquisar" não encontrado.');
+  if (!searchBtn) throw uiError("SEARCH_BUTTON_MISSING", 'Botão "Pesquisar" não encontrado na tela de ponto.');
   searchBtn.click();
   return { ok: true };
 }
@@ -318,12 +385,13 @@ window.addEventListener("message", async (event) => {
 
   const { requestId, action, params } = msg.payload;
   try {
+    await requirePontoPage();
     let result;
     if (action === "search") result = await uiSearch(params);
     else if (action === "addNota") result = await uiAddNota(params);
     else if (action === "baterPonto") result = await uiBaterPonto();
     else if (action === "removerBatida") result = await uiRemoverBatida(params);
-    else throw new Error(`Ação desconhecida: ${action}`);
+    else throw uiError("UNKNOWN_ACTION", `Ação desconhecida: ${action}`);
 
     window.postMessage(
       { source: MSG_NS, type: "UI_ACTION_RESULT", payload: { requestId, ok: true, result } },
@@ -332,7 +400,11 @@ window.addEventListener("message", async (event) => {
   } catch (err) {
     console.warn("[PontoIcarusExt] UI_ACTION falhou:", err);
     window.postMessage(
-      { source: MSG_NS, type: "UI_ACTION_RESULT", payload: { requestId, ok: false, error: String(err?.message || err) } },
+      {
+        source: MSG_NS,
+        type: "UI_ACTION_RESULT",
+        payload: { requestId, ok: false, code: err?.code || "UNKNOWN", error: String(err?.message || err) },
+      },
       "*"
     );
   }

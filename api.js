@@ -26,7 +26,11 @@ chrome.runtime.onMessage.addListener((msg) => {
       // não abriu, etc.) ficava engolido em silêncio, sem cair no catch()
       // de quem chamou (baterPonto, addNota, removerBatida, ...).
       if (msg.payload.ok) p.resolve(msg.payload.result);
-      else p.reject(new Error(msg.payload.error || "Ação falhou na aba do Icarus."));
+      else {
+        const err = new Error(msg.payload.error || "Ação falhou na aba do Icarus.");
+        err.code = msg.payload.code || "UNKNOWN";
+        p.reject(err);
+      }
     }
   }
 
@@ -48,9 +52,11 @@ function runUiAction(action, params) {
     setTimeout(() => {
       if (__pending.has(requestId)) {
         __pending.delete(requestId);
-        reject(new Error("Tempo esgotado. Confira se a aba do Ponto Icarus está aberta e você está logado."));
+        const err = new Error("Tempo esgotado. Confira se a aba do Ponto Icarus está aberta e você está logado.");
+        err.code = "TIMEOUT";
+        reject(err);
       }
-    }, 15000);
+    }, 25000);
   });
 }
 

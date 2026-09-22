@@ -36,6 +36,29 @@ const PUNCH_SCHEDULE = [
   { seq: 4, hh: 17, mm: 0, label: "saída (2ª saída)" },
 ];
 const MISSING_PUNCH_GRACE_MIN = 60; // só avisa depois de 1h do horário esperado
+
+// ---------- ciclo de vida do painel (fecha a aba do Icarus ao fechar) ----------
+// Conecta uma porta nomeada assim que o painel abre; o background.js usa
+// onDisconnect pra saber quando fechar a aba do Icarus (ver background.js).
+// Reconecta sozinho se a porta cair: isso acontece tanto quando o painel
+// fecha de verdade quanto quando o service worker é só suspenso/reiniciado
+// (mesmo com o painel ainda aberto) — o id fixo por documento é o que deixa
+// o background distinguir os dois casos.
+const __PANEL_ID = crypto.randomUUID();
+function __connectToBackground() {
+  let port;
+  try {
+    port = chrome.runtime.connect({ name: `${MSG_NS}:sidepanel:${__PANEL_ID}` });
+  } catch (_) {
+    setTimeout(__connectToBackground, 250);
+    return;
+  }
+  port.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError;
+    setTimeout(__connectToBackground, 250);
+  });
+}
+__connectToBackground();
 const DEFAULT_JORNADA_MIN = 8 * 60; // meta do dia (08-12 + 13-17) quando o Icarus ainda não tem registro nenhum pro dia
 const MINUTOS_ABONO_POR_DIA_UTIL = 48; // regra do RH: teto de flexibilização = dias úteis do período × 48min
 const JORNADA_PADRAO_MIN = 8 * 60 + 48; // 8:48 — jornada padrão usada como base pra prever as batidas restantes do dia
@@ -207,7 +230,7 @@ function positionNotificationStack() {
   arrow.style.left = `${arrowCenter - arrowHalf}px`;
 }
 
-function showNotificationRow(id, { text, href, type = "info", closable = false, autoHideMs = null, anchor = "#refreshBtn" }) {
+function showNotificationRow(id, { text, href, onClick, type = "info", closable = false, autoHideMs = null, anchor = "#refreshBtn" }) {
   const stack = ensureNotificationStack();
   const rowsBox = stack.querySelector(".notification-stack-rows");
   let entry = notificationRows.get(id);
@@ -236,6 +259,10 @@ function showNotificationRow(id, { text, href, type = "info", closable = false, 
     textEl.target = "_blank";
     textEl.rel = "noopener";
   }
+  // onclick (não addEventListener) pra não empilhar handler quando a linha
+  // é reaproveitada (mesmo id chamado de novo com outro onClick).
+  textEl.onclick = onClick || null;
+  textEl.style.cursor = onClick ? "pointer" : "";
   stack.classList.add("visible");
   positionNotificationStack();
   if (autoHideMs) entry.hideTimer = setTimeout(() => hideNotificationRow(id), autoHideMs);
@@ -259,6 +286,41 @@ function showStatus(text, type = "info", autoHideMs = null) {
 }
 function hideStatus() {
   hideNotificationRow("status");
+}
+
+// Traz a aba do Icarus pra frente (ou abre uma nova) na janela atual — pedido
+// pelo balão de "não logado"/"tela errada". Nunca loga sozinho.
+function focusIcarusTab() {
+  chrome.runtime.sendMessage({ source: MSG_NS, type: "FOCUS_ICARUS_TAB" }).catch(() => {});
+  showStatus("Depois de logar, clique em Atualizar aqui no painel.", "info", 8000);
+}
+
+// Mensagens específicas por causa (ver inject.js requirePontoPage/uiSearch e
+// background.js sendToTab) — substitui o antigo "Erro ao buscar: <mensagem
+// crua do DOM>", que era genérico demais pra dizer se o problema era não
+// estar logado, estar na tela errada, ou o Icarus ter mudado o layout.
+const SEARCH_ERROR_MESSAGES = {
+  NOT_LOGGED_IN: "Você não está logado no Icarus. Clique aqui pra fazer login.",
+  WRONG_ROUTE: "A aba do Icarus não está na tela de Registro de Ponto. Clique aqui pra abri-la.",
+  PAGE_NOT_READY: "A página do Icarus ainda está carregando. Tente Atualizar em alguns segundos.",
+  SEARCH_FIELDS_MISSING: "Não achei os campos de período na tela de ponto — o Icarus pode ter mudado. Recarregue a aba (F5).",
+  SEARCH_BUTTON_MISSING: 'Não achei o botão "Pesquisar" na tela de ponto. Recarregue a aba (F5).',
+  TAB_LOAD_TIMEOUT: "A aba do Icarus demorou demais pra carregar. Tente de novo.",
+  TAB_UNREACHABLE: "Não consegui falar com a aba do Icarus. Recarregue a aba (F5).",
+  TIMEOUT: "A busca demorou demais. Confira a aba do Icarus e tente de novo.",
+};
+
+function showSearchError(err, fallbackPrefix = "Erro ao buscar") {
+  const code = err?.code || "UNKNOWN";
+  const clicavel = code === "NOT_LOGGED_IN" || code === "WRONG_ROUTE";
+  hideStatus();
+  showNotificationRow(clicavel ? "login" : "status", {
+    text: SEARCH_ERROR_MESSAGES[code] || `${fallbackPrefix}: ${err.message}`,
+    type: "error",
+    closable: true,
+    anchor: "#refreshBtn",
+    onClick: clicavel ? focusIcarusTab : null,
+  });
 }
 
 // Popup de configurações (era o accordion "Funções extras", agora abre a
@@ -320,6 +382,7 @@ function ingestRegistros(data) {
   renderCalendar();
   renderDayPanel();
   hideStatus();
+  hideNotificationRow("login");
 }
 
 async function loadPendingAdjustments() {
@@ -420,7 +483,7 @@ async function fetchMonth() {
     if (data) ingestRegistros(data);
     playRefreshSuccessAnimation();
   } catch (err) {
-    showStatus(`Erro ao buscar: ${err.message}`, "error");
+    showSearchError(err);
   }
 }
 
@@ -896,7 +959,7 @@ function renderDayPanel() {
     ? "Batidas de hoje"
     : `Batidas de ${date.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit" })}`;
   $("#backToTodayBtn").classList.toggle("hidden", isToday);
-  $("#workedLabel").textContent = isToday ? "Trabalhado hoje" : "Normal";
+  $("#workedLabel").textContent = isToday ? "Trabalhado hoje" : "Trabalhado";
   $("#remainingLabel").textContent = isToday ? "Falta trabalhar" : "Faltando";
 
   // tags do dia
@@ -1046,22 +1109,21 @@ function renderDayPanel() {
     // o horário informado) — senão duplicaria essa batida no total.
     const diaPendingComHorarioSel = diaPendingMissing.filter((p) => p.approxTime && !p.done);
     const mergedTimesSel = ponto ? mergedPunchesForDay(key, ordenadasVisiveis, diaPendingComHorarioSel).map((item) => item.timeMs) : [];
-    const temOverrideLocal = diaPendingComHorarioSel.length > 0 || diaPendingDelete.length > 0;
 
-    if (ponto && temOverrideLocal && mergedTimesSel.length % 2 === 0) {
-      // não dá pra confiar no total pronto do Icarus aqui: ou falta uma
-      // batida que só existe localmente (digitada, não enviada ainda), ou
-      // sobra uma marcada pra exclusão — recalcula somando os pares reais
-      // visíveis + pendentes, igual o tickLive faz pra hoje.
-      const trabalhadoApiBase = (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) + (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0);
-      const metaMin = trabalhadoApiBase + (ponto.minutoFaltante || 0);
+    // Trabalhado/Falta trabalhar de QUALQUER dia (não só hoje) vêm sempre das
+    // batidas reais + ajustes anotados na extensão, nunca de tempoNormal/
+    // tempoFaltando do Icarus — a meta ali pode não bater com a que o
+    // funcionário está mirando hoje (8h vs 8h48, via abono diário). Sem
+    // nenhum dado do dia (nem ponto, nem ajuste), não dá pra saber nada.
+    if (!ponto && !diaPendingComHorarioSel.length) {
+      $("#workedToday").textContent = "--:--";
+      $("#remainingToday").textContent = "--:--";
+    } else {
       let workedLocal = 0;
       for (let i = 0; i + 1 < mergedTimesSel.length; i += 2) workedLocal += (mergedTimesSel[i + 1] - mergedTimesSel[i]) / 60000;
+      const metaMin = metaMinutosHoje();
       $("#workedToday").textContent = minutesToHHMM(workedLocal);
       $("#remainingToday").textContent = minutesToHHMM(Math.max(0, metaMin - workedLocal));
-    } else {
-      $("#workedToday").textContent = ponto?.tempoNormal || "--:--";
-      $("#remainingToday").textContent = ponto?.tempoFaltando || "--:--";
     }
     $("#intervalToday").textContent = ponto ? minutesToHHMM(intervalMinutesFromTimes(mergedTimesSel)) : "--:--";
   }
@@ -1155,19 +1217,9 @@ function computeTotalsForDayPreview(key, seq, inputTimeStr) {
     workedMin += (Date.now() - merged[merged.length - 1]) / 60000;
   }
 
-  const trabalhadoApiBase = ponto
-    ? (ponto.minutoNormalDiurno || 0) +
-      (ponto.minutoNormalNoturno || 0) +
-      (ponto.minutoExtraTP1 || 0) +
-      (ponto.minutoExtraTP2 || 0) +
-      (ponto.minutoExtraTP3 || 0)
-    : 0;
-  // Hoje sempre usa meta fixa (8:00, ou 8:48 com o checkbox), sem depender
-  // do que o Icarus calculou pro dia. Outro dia (não-hoje) continua usando
-  // a meta real do Icarus, que já fechou e é autoritativa.
-  const metaMin = isToday
-    ? metaMinutosHoje()
-    : ponto ? trabalhadoApiBase + (ponto.minutoFaltante || 0) : DEFAULT_JORNADA_MIN;
+  // Meta fixa (8h, ou 8h48/6h com o checkbox) pra qualquer dia, não só hoje —
+  // nunca depende do que o Icarus calculou pro dia (ver renderDayPanel).
+  const metaMin = metaMinutosHoje();
 
   return { worked: workedMin, remaining: Math.max(0, metaMin - workedMin) };
 }
@@ -1265,38 +1317,24 @@ function tickLive() {
     return;
   }
 
-  const trabalhadoApiBase = ponto
-    ? (ponto.minutoNormalDiurno || 0) +
-      (ponto.minutoNormalNoturno || 0) +
-      (ponto.minutoExtraTP1 || 0) +
-      (ponto.minutoExtraTP2 || 0) +
-      (ponto.minutoExtraTP3 || 0)
-    : 0;
   // Meta de hoje é sempre fixa (8:00, ou 8:48 com "8:48 hoje" marcado) —
   // nunca depende do que o Icarus calculou pro dia, pra ficar previsível.
   const metaMin = metaMinutosHoje();
 
   // sequência cronológica só dos instantes (reais visíveis + pendentes com
-  // horário) — usada pro intervalo sempre (o Icarus não expõe esse número)
-  // e pro trabalhado quando não dá pra confiar no total pronto do Icarus.
+  // horário) — usada sempre pro trabalhado/intervalo de hoje, nunca o total
+  // pronto do Icarus (minutoNormalDiurno etc.): logo depois de bater a
+  // última batida do dia, esses campos agregados do Icarus ainda podem
+  // estar defasados (só a lista de batidas em si já vem atualizada),
+  // então somar os pares entrada/saída na hora é o único jeito confiável.
   const mergedTimes = mergedPunchesForDay(key, ordenadasVisiveis, diaPendingComHorario).map((item) => item.timeMs);
 
-  let workedMin;
-  let emAndamento;
-  if (diaPendingComHorario.length || diaPendingDelete.length) {
-    // total pronto do Icarus não serve aqui: ou falta uma batida que só
-    // existe localmente, ou sobra uma que precisa sair da conta.
-    workedMin = 0;
-    for (let i = 0; i + 1 < mergedTimes.length; i += 2) {
-      workedMin += (mergedTimes[i + 1] - mergedTimes[i]) / 60000;
-    }
-    emAndamento = mergedTimes.length % 2 === 1;
-    if (emAndamento) workedMin += (Date.now() - mergedTimes[mergedTimes.length - 1]) / 60000;
-  } else {
-    emAndamento = ordenadas.length % 2 === 1;
-    const decorridoAberto = emAndamento ? (Date.now() - ordenadas[ordenadas.length - 1].horario) / 60000 : 0;
-    workedMin = trabalhadoApiBase + decorridoAberto;
+  let workedMin = 0;
+  for (let i = 0; i + 1 < mergedTimes.length; i += 2) {
+    workedMin += (mergedTimes[i + 1] - mergedTimes[i]) / 60000;
   }
+  const emAndamento = mergedTimes.length % 2 === 1;
+  if (emAndamento) workedMin += (Date.now() - mergedTimes[mergedTimes.length - 1]) / 60000;
 
   const remainingMin = Math.max(0, metaMin - workedMin);
   workedEl.textContent = minutesToHHMM(workedMin);
@@ -1377,7 +1415,7 @@ async function baterPonto() {
     playBaterPontoSuccessAnimation();
     setTimeout(fetchMonth, 1200);
   } catch (err) {
-    showStatus(`Erro ao registrar ponto: ${err.message}`, "error");
+    showSearchError(err, "Erro ao registrar ponto");
   } finally {
     btn.disabled = false;
   }
