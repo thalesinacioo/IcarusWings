@@ -286,9 +286,6 @@ a.notification-row-text:hover { text-decoration: underline; }
 .period-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .period-summary > div,
 .period-summary-item { background: var(--bg); border-radius: 9px; padding: 8px; text-align: center; }
-.hs-value.status-green { color: var(--green); }
-.hs-value.status-yellow { color: var(--yellow); }
-.hs-value.status-red { color: var(--red); }
 
 .tooltip-bubble {
   position: fixed;
@@ -436,6 +433,17 @@ a.notification-row-text:hover { text-decoration: underline; }
 .ferias-item-ferias { --item-color: var(--cyan); }
 .ferias-item-folga { --item-color: var(--navy); }
 .ferias-item-abono { --item-color: var(--black); }
+@media (prefers-color-scheme: dark) {
+  /* --black serve pra quadradinhos preenchidos (chip do calendário, bolinha
+     da legenda), onde o texto/ícone por cima é sempre branco — contraste ok
+     em qualquer tema. Mas na pílula "Abono" (Férias/Folgas/Abono), o preto é
+     o próprio TEXTO sobre um fundo quase transparente que herda o fundo
+     escuro do painel — preto em cima de escuro fica ilegível. Essa regra
+     precisa vir DEPOIS da `.ferias-item-abono` acima: com a mesma
+     especificidade, CSS resolve empate pela ordem no arquivo, não por causa
+     de estar dentro de @media — declarada antes, perdia sempre.  */
+  .ferias-item-abono { --item-color: #ffffff; }
+}
 .ferias-item-text { flex: 1; }
 .ferias-item-remove { background: none; border: none; color: var(--item-color); font-size: 12px; cursor: pointer; padding: 0 0 0 6px; flex-shrink: 0; }
 .pending-cancel { background: none; border: none; color: var(--orange); font-size: 12px; cursor: pointer; padding: 0 0 0 6px; flex-shrink: 0; }
@@ -561,3 +569,60 @@ a.notification-row-text:hover { text-decoration: underline; }
 
 .preview-box { background: var(--bg); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text); }
 .preview-box strong { font-weight: 600; }
+
+/* onboarding guiado (tour.js) — reaproveita a paleta e os botões já
+   existentes (.primary-btn / .secondary-btn / .link-btn). */
+.tour-fab {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: var(--brand);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  z-index: 10000;
+}
+.tour-fab:hover { background: var(--brand-dark); }
+
+.tour-blocker {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: transparent;
+}
+.tour-spotlight {
+  position: fixed;
+  z-index: 9999;
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.tour-bubble {
+  position: fixed;
+  z-index: 10001;
+  width: 240px;
+  max-width: calc(100vw - 32px);
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.tour-bubble-step { font-size: 10.5px; color: var(--muted); font-weight: 600; margin-bottom: 2px; }
+.tour-bubble-title { font-weight: 600; margin-bottom: 4px; }
+.tour-bubble-text { font-size: 12px; line-height: 1.45; color: var(--text); }
+.tour-bubble-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
+.tour-bubble-nav { display: flex; gap: 6px; }
+.tour-bubble-nav .secondary-btn,
+.tour-bubble-nav .primary-btn { width: auto; padding: 7px 12px; font-size: 12px; }
+.tour-skip-btn { padding: 2px 0; }

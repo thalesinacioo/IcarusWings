@@ -595,43 +595,23 @@ function apuracaoPeriodFor(date) {
   return { start, end };
 }
 
-// Ajuste pendente em qualquer dia do período: solicitação real no Icarus
-// ainda aguardando o gestor, OU lembrete local da extensão ("ajustar
-// depois"/horário aproximado ainda não registrado).
-function periodoTemAjustePendente(start, end) {
-  const d = new Date(start);
-  while (d <= end) {
-    const key = dateKey(d);
-    const ponto = registrosPorDia[key];
-    if (ponto?.temAbonoOuAjusteRegistrado === true && (ponto.statusSolicitacao || "").toLowerCase().includes("aguardando")) return true;
-    if ((pendingAdjustments[key] || []).length > 0) return true;
-    d.setDate(d.getDate() + 1);
-  }
-  return false;
-}
-
-// Dia do período em que o Icarus registrou trabalho mas com menos de 4
-// batidas reais — mesma heurística de "trabalhou algo" do classifyDay.
-function periodoTemDiaComPoucasBatidas(start, end) {
-  const d = new Date(start);
-  while (d <= end) {
-    const ponto = registrosPorDia[dateKey(d)];
-    if (ponto) {
-      const batidas = batidasOrdenadas(ponto);
-      const trabalhouAlgo = (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) > 0 || batidas.length > 0;
-      if (trabalhouAlgo && batidas.length < 4) return true;
-    }
-    d.setDate(d.getDate() + 1);
-  }
-  return false;
+// Saldo de horas de HOJE, direto do próprio Icarus (ponto.tempoSaldo — já
+// vinha só no tooltip do calendário). Se hoje ainda não tem esse campo
+// calculado (sem batida ainda), usa o do último dia anterior que tiver.
+// Sem transformação nenhuma: o Icarus já leva em conta a flexibilidade de
+// 10min de entrada/saída, que a extensão não tem como reproduzir sozinha.
+function saldoHorasAtual() {
+  const todayKey = dateKey(new Date());
+  if (registrosPorDia[todayKey]?.tempoSaldo) return registrosPorDia[todayKey].tempoSaldo;
+  const keysComSaldo = Object.keys(registrosPorDia)
+    .filter((k) => k <= todayKey && registrosPorDia[k]?.tempoSaldo)
+    .sort();
+  return keysComSaldo.length ? registrosPorDia[keysComSaldo[keysComSaldo.length - 1]].tempoSaldo : null;
 }
 
 function renderFlexibilizacaoFromCache(start, end, tetoMin) {
   $("#tetoAbonoMes").textContent = minutesToHHMM(tetoMin);
-
-  const saldoEl = $("#saldoHoras");
-  const { faltanteTotal: usadoMin, extraTotal: extraMin } = saldoLocalNoPeriodo(start, end);
-  saldoEl.textContent = minutesToHHMM(usadoMin);
+  $("#saldoHoras").textContent = saldoHorasAtual() || "--:--";
 
   // Abono estimado = soma de 48min por dia útil já decorrido no período
   // (do início até hoje, ou até o fim se o período já fechou), limitado ao
@@ -643,100 +623,8 @@ function renderFlexibilizacaoFromCache(start, end, tetoMin) {
   const abonoMin = Math.min(diasUteisDecorridos * MINUTOS_ABONO_POR_DIA_UTIL, tetoMin);
   $("#abonoEstimado").textContent = minutesToHHMM(abonoMin);
 
-  saldoEl.classList.remove("status-green", "status-yellow", "status-red");
-  if (!jornada6hAtivo) {
-    saldoEl.classList.add(usadoMin < abonoMin ? "status-green" : usadoMin === abonoMin ? "status-yellow" : "status-red");
-  }
-
-  let avisoSaldo;
-  let explicacaoSaldo;
-  if (jornada6hAtivo) {
-    explicacaoSaldo = "Jornada de 6h/dia não tem abono nem teto de flexibilização — este é só quanto você já ficou devendo, calculado com base nas suas batidas.";
-    avisoSaldo = "Não se aplica à sua jornada.";
-  } else {
-    explicacaoSaldo = "Cálculo de quantas horas você já utilizou do abono, com base nas suas batidas anotadas na extensão.";
-    if (usadoMin > abonoMin) {
-      if (periodoTemAjustePendente(start, end)) {
-        avisoSaldo = "Parece que tem ajustes pendentes, verifique com seu gestor.";
-      } else if (periodoTemDiaComPoucasBatidas(start, end)) {
-        avisoSaldo = "Verifique suas horas, você tem inconsistências.";
-      } else {
-        avisoSaldo = "Parece que suas horas estão abaixo do esperado, acho que você tem problemas.";
-      }
-    } else if (extraMin > 0) {
-      avisoSaldo = "Você tem saldo de horas positivas.";
-    } else {
-      avisoSaldo = "Suas horas estão dentro do esperado.";
-    }
-  }
-  $("#saldoHorasBox").dataset.tooltip = `${avisoSaldo}\n\n${explicacaoSaldo}`;
-}
-
-// Meta de minutos esperada num dia, só com dados locais: dia útil (sem
-// feriado nacional) e sem estar marcado como férias/folga/abono na
-// extensão. Não usa o que o Icarus decidiu que era a meta do dia.
-function metaLocalDoDia(key, holidays) {
-  if (feriasFolgaParaDia(key)) return 0;
-  if (!isBusinessDay(keyToDate(key), holidays)) return 0;
-  return jornada6hAtivo ? JORNADA_6H_MIN : DEFAULT_JORNADA_MIN;
-}
-
-// Minutos efetivamente trabalhados num dia, somando só os pares
-// entrada/saída das batidas reais + ajustes pendentes anotados na
-// extensão — não usa nenhum total pronto do Icarus, que pode estar
-// defasado enquanto um ajuste ainda aguarda aprovação do gestor.
-function minutosTrabalhadosLocalNoDia(key) {
-  const ponto = registrosPorDia[key];
-  const diaPending = pendingAdjustments[key] || [];
-  // "done" (não-delete) significa que o Icarus já tem batida real cobrindo
-  // esse horário informado (reconcilePendingAdjustments em background.js) —
-  // incluir o horário aproximado de novo aqui duplicaria a batida real já
-  // presente em `ordenadas`, bagunçando o pareamento entrada/saída.
-  const diaPendingMissing = diaPending.filter((p) => p.type !== "delete" && !p.done);
-  const diaPendingDelete = diaPending.filter((p) => p.type === "delete");
-  const ordenadas = batidasOrdenadas(ponto).filter((b) => !diaPendingDelete.some((p) => p.horarioMs === b.horario));
-  const merged = mergedPunchesForDay(key, ordenadas, diaPendingMissing).map((item) => item.timeMs);
-  let worked = 0;
-  for (let i = 0; i + 1 < merged.length; i += 2) worked += (merged[i + 1] - merged[i]) / 60000;
-  return worked;
-}
-
-// Abono do período (card "Abono") = soma das horas faltantes de cada dia já
-// fechado (até ontem — hoje ainda em andamento ficaria artificialmente
-// negativo), tudo calculado com base nas batidas anotadas na extensão.
-// Também soma à parte as horas extras (dias que passaram da meta), só pra
-// avisar quando há saldo positivo acumulado — não abate do abono devido.
-function saldoLocalNoPeriodo(start, end) {
-  const hojeMeiaNoite = new Date();
-  hojeMeiaNoite.setHours(0, 0, 0, 0);
-  const ontem = new Date(hojeMeiaNoite);
-  ontem.setDate(ontem.getDate() - 1);
-  const fimFechado = ontem < end ? ontem : end;
-  if (fimFechado < start) return { faltanteTotal: 0, extraTotal: 0 };
-
-  const holidays = new Set();
-  for (let y = start.getFullYear(); y <= fimFechado.getFullYear(); y++) nationalHolidaySet(y).forEach((k) => holidays.add(k));
-
-  let faltanteTotal = 0;
-  let extraTotal = 0;
-  const d = new Date(start);
-  while (d <= fimFechado) {
-    const key = dateKey(d);
-    // Sem nenhuma batida (real ou anotada) pro dia, não dá pra saber se
-    // faltou ou não — não conta como falta só por falta de dado em cache
-    // (ex: mês ainda não sincronizado), senão qualquer dia sem sync vira
-    // um dia inteiro de "abono usado" por engano.
-    if (registrosPorDia[key] || (pendingAdjustments[key] || []).length > 0) {
-      const meta = metaLocalDoDia(key, holidays);
-      if (meta > 0) {
-        const trabalhado = minutosTrabalhadosLocalNoDia(key);
-        faltanteTotal += Math.max(0, meta - trabalhado);
-        extraTotal += Math.max(0, trabalhado - meta);
-      }
-    }
-    d.setDate(d.getDate() + 1);
-  }
-  return { faltanteTotal, extraTotal };
+  $("#saldoHorasBox").dataset.tooltip =
+    "Saldo direto do Icarus (já considera a flexibilidade de 10min de entrada/saída, que a extensão não calcula sozinha).";
 }
 
 // Mostra período/teto/valores na hora com o que já tiver em cache — sem

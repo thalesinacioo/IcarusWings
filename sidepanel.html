@@ -22,18 +22,20 @@
   </header>
 
   <div id="settingsPopup" class="settings-popup hidden">
-    <label class="settings-row">
-      <input type="checkbox" id="almocoUmaHoraCheck" />
-      Faço intervalo de 1h no almoço
-    </label>
-    <label class="settings-row">
-      <input type="checkbox" id="jornada848Check" />
-      8:48 hoje
-    </label>
-    <label class="settings-row">
-      <input type="checkbox" id="jornada6hCheck" />
-      Eu trabalho 6:00h/dia
-    </label>
+    <div id="settingsToggles">
+      <label class="settings-row">
+        <input type="checkbox" id="almocoUmaHoraCheck" />
+        Faço intervalo de 1h no almoço
+      </label>
+      <label class="settings-row">
+        <input type="checkbox" id="jornada848Check" />
+        8:48 hoje
+      </label>
+      <label class="settings-row">
+        <input type="checkbox" id="jornada6hCheck" />
+        Eu trabalho 6:00h/dia
+      </label>
+    </div>
     <div id="feriasFolgasList" class="ferias-list hidden"></div>
     <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%; margin-top: 8px;">+ Férias / Folgas / Abono</button>
     <div class="settings-popup-version"><span id="appVersion">—</span></div>
@@ -99,11 +101,11 @@
       <div id="dayPanelNota"></div>
     </section>
 
-    <section class="card">
+    <section class="card" id="flexCard">
       <div class="card-title">Flexibilização do mês <span class="wip-tag">(ainda em construção)</span></div>
       <div class="period-summary">
         <div class="period-summary-item" id="saldoHorasBox" tabindex="0">
-          <span class="hs-label">Abono</span>
+          <span class="hs-label">Saldo de horas</span>
           <span id="saldoHoras" class="hs-value">--:--</span>
         </div>
         <div class="period-summary-item" id="abonoEstimadoBox" tabindex="0" data-tooltip="Esse é o máximo de horas de abono que você pode utilizar até agora.">
@@ -181,7 +183,10 @@
     </div>
   </div>
 
+  <button id="tourFab" class="tour-fab" data-tooltip="Ver tutorial">🪽</button>
+
   <script src="api.js"></script>
   <script src="sidepanel.js"></script>
+  <script src="tour.js"></script>
 </body>
 </html>
