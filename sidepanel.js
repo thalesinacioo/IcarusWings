@@ -629,12 +629,17 @@ function renderFlexibilizacaoFromCache(start, end, tetoMin) {
 
 // Mostra período/teto/valores na hora com o que já tiver em cache — sem
 // esperar rede, mesmo padrão do resto do painel (nunca abre vazio).
-// Acompanha o mês em exibição no calendário (currentMonth/currentYear), não
-// sempre "hoje" — dia 1 do mês é sempre < 26, então o período resultante é
-// "dia 26 do mês anterior ao dia 25 do mês em exibição" (convenção usual de
-// rotular o período de apuração pelo mês em que ele fecha).
+// Acompanha o mês em exibição no calendário (currentMonth/currentYear). Ao
+// navegar pra outro mês, usa o dia 1 dele — dia 1 é sempre < 26, então o
+// período vira "dia 26 do mês anterior ao dia 25 do mês em exibição"
+// (convenção de rotular o período pelo mês em que ele fecha). Mas enquanto
+// o mês em exibição É o mês real de hoje, usa a data de hoje de verdade —
+// senão, depois do dia 25, o card ficava preso no período que já fechou em
+// vez de virar pro novo período (que só fecha no mês seguinte).
 function showFlexibilizacaoInstant() {
-  const { start, end } = apuracaoPeriodFor(new Date(currentYear, currentMonth, 1));
+  const now = new Date();
+  const isMesAtual = currentYear === now.getFullYear() && currentMonth === now.getMonth();
+  const { start, end } = apuracaoPeriodFor(isMesAtual ? now : new Date(currentYear, currentMonth, 1));
   const diasUteis = countBusinessDays(start, end);
   const tetoMin = jornada6hAtivo ? 0 : diasUteis * MINUTOS_ABONO_POR_DIA_UTIL;
   const fmtDDMM = (d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
