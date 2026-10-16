@@ -31,9 +31,9 @@
 // ficou faltando (ex: já passou muito da hora esperada da volta do almoço).
 const PUNCH_SCHEDULE = [
   { seq: 1, hh: 8, mm: 0, label: "1ª entrada" },
-  { seq: 2, hh: 12, mm: 0, label: "1ª saída (almoço)" },
-  { seq: 3, hh: 13, mm: 0, label: "volta do almoço (2ª entrada)" },
-  { seq: 4, hh: 17, mm: 0, label: "saída (2ª saída)" },
+  { seq: 2, hh: 12, mm: 0, label: "1ª saída" },
+  { seq: 3, hh: 13, mm: 0, label: "2ª entrada" },
+  { seq: 4, hh: 17, mm: 0, label: "2ª saída" },
 ];
 const MISSING_PUNCH_GRACE_MIN = 60; // só avisa depois de 1h do horário esperado
 
@@ -404,13 +404,15 @@ function fmtDDMMYYYY(key) {
 
 function renderFeriasFolgasList() {
   const box = $("#feriasFolgasList");
-  if (!feriasFolgasPeriods.length) {
+  const diaKey = selectedDayKey || dateKey(new Date());
+  const doDia = feriasFolgasPeriods.filter((p) => diaKey >= p.inicio && diaKey <= p.fim);
+  if (!doDia.length) {
     box.classList.add("hidden");
     box.innerHTML = "";
     return;
   }
   box.classList.remove("hidden");
-  box.innerHTML = feriasFolgasPeriods
+  box.innerHTML = doDia
     .slice()
     .sort((a, b) => a.inicio.localeCompare(b.inicio))
     .map((p) => {
@@ -436,10 +438,10 @@ function renderFeriasFolgasList() {
 }
 
 function openFeriasFolgasModal() {
-  $("#feriasFolgasTipo").value = "ferias";
-  const hoje = dateKey(new Date());
-  $("#feriasFolgasInicio").value = hoje;
-  $("#feriasFolgasFim").value = hoje;
+  $("#feriasFolgasTipo").value = "abono";
+  const dia = selectedDayKey || dateKey(new Date());
+  $("#feriasFolgasInicio").value = dia;
+  $("#feriasFolgasFim").value = dia;
   $("#feriasFolgasNota").value = "";
   $("#feriasFolgasModal").classList.remove("hidden");
 }
@@ -595,36 +597,40 @@ function apuracaoPeriodFor(date) {
   return { start, end };
 }
 
-// Saldo de horas de HOJE, direto do próprio Icarus (ponto.tempoSaldo — já
-// vinha só no tooltip do calendário). Se hoje ainda não tem esse campo
-// calculado (sem batida ainda), usa o do último dia anterior que tiver.
+// Saldo acumulado direto do Icarus (ponto.tempoSaldo é o saldo corrido, não
+// o do dia) no último dia fechado do período: até ontem, ou até o fim se o
+// período já fechou. Hoje fica de fora porque ainda está em andamento.
 // Sem transformação nenhuma: o Icarus já leva em conta a flexibilidade de
 // 10min de entrada/saída, que a extensão não tem como reproduzir sozinha.
-function saldoHorasAtual() {
-  const todayKey = dateKey(new Date());
-  if (registrosPorDia[todayKey]?.tempoSaldo) return registrosPorDia[todayKey].tempoSaldo;
+function saldoHorasAteOntem(start, fimDecorrido) {
+  if (fimDecorrido < start) return "00:00";
+  const inicioKey = dateKey(start);
+  const fimKey = dateKey(fimDecorrido);
   const keysComSaldo = Object.keys(registrosPorDia)
-    .filter((k) => k <= todayKey && registrosPorDia[k]?.tempoSaldo)
+    .filter((k) => k >= inicioKey && k <= fimKey && registrosPorDia[k]?.tempoSaldo)
     .sort();
   return keysComSaldo.length ? registrosPorDia[keysComSaldo[keysComSaldo.length - 1]].tempoSaldo : null;
 }
 
 function renderFlexibilizacaoFromCache(start, end, tetoMin) {
   $("#tetoAbonoMes").textContent = minutesToHHMM(tetoMin);
-  $("#saldoHoras").textContent = saldoHorasAtual() || "--:--";
 
-  // Abono estimado = soma de 48min por dia útil já decorrido no período
-  // (do início até hoje, ou até o fim se o período já fechou), limitado ao
-  // teto do período inteiro.
-  const hojeMeiaNoite = new Date();
-  hojeMeiaNoite.setHours(0, 0, 0, 0);
-  const fimDecorrido = hojeMeiaNoite < end ? hojeMeiaNoite : end;
+  // Último dia fechado do período: ontem, ou o fim se o período já fechou.
+  const ontem = new Date();
+  ontem.setHours(0, 0, 0, 0);
+  ontem.setDate(ontem.getDate() - 1);
+  const fimDecorrido = ontem < end ? ontem : end;
+
+  $("#saldoHoras").textContent = saldoHorasAteOntem(start, fimDecorrido) || "--:--";
+
+  // Abono estimado = soma de 48min por dia útil já fechado no período,
+  // limitado ao teto do período inteiro.
   const diasUteisDecorridos = fimDecorrido < start ? 0 : countBusinessDays(start, fimDecorrido);
   const abonoMin = Math.min(diasUteisDecorridos * MINUTOS_ABONO_POR_DIA_UTIL, tetoMin);
   $("#abonoEstimado").textContent = minutesToHHMM(abonoMin);
 
   $("#saldoHorasBox").dataset.tooltip =
-    "Saldo direto do Icarus (já considera a flexibilidade de 10min de entrada/saída, que a extensão não calcula sozinha).";
+    "Saldo acumulado até ontem, direto do Icarus (já considera a flexibilidade de 10min de entrada/saída, que a extensão não calcula sozinha).";
 }
 
 // Mostra período/teto/valores na hora com o que já tiver em cache — sem
@@ -957,10 +963,9 @@ function renderDayPanel() {
     pendingBox.querySelectorAll(".pending-check").forEach((cb) => {
       cb.addEventListener("change", () => IcarusAPI.setPendingDeletionDone(key, Number(cb.dataset.horario), cb.checked));
     });
-    // "já ajustei no Icarus" — marca só localmente (mesma ideia do check de
-    // exclusão pendente). Se a busca seguinte já mostrar o Icarus cobrindo
-    // esse horário, reconcilePendingAdjustments (background.js) marca
-    // sozinho, sem precisar você clicar.
+    // "já cadastrei no Icarus" — só risca o texto; o ajuste continua no
+    // cartão e nas contas até ser aprovado. Quando a busca mostrar o ajuste
+    // aprovado, reconcilePendingAdjustments (background.js) remove o item.
     pendingBox.querySelectorAll(".pending-adjust-check").forEach((cb) => {
       cb.addEventListener("change", () => IcarusAPI.setPendingAdjustmentDone(key, Number(cb.dataset.seq), cb.checked));
     });
@@ -992,15 +997,15 @@ function renderDayPanel() {
   // nota do dia
   $("#dayPanelNota").innerHTML = ponto?.nota ? `<div class="day-nota"><span>Nota</span>${ponto.nota}</div>` : "";
 
+  renderFeriasFolgasList();
+
   // contadores: hoje é ao vivo (atualiza sozinho); outro dia é estático (Icarus)
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   if (isToday) {
     tickLive();
     liveTimer = setInterval(tickLive, 30000);
   } else {
-    // Ignora ajustes já marcados "done" (Icarus já tem batida real cobrindo
-    // o horário informado) — senão duplicaria essa batida no total.
-    const diaPendingComHorarioSel = diaPendingMissing.filter((p) => p.approxTime && !p.done);
+    const diaPendingComHorarioSel = diaPendingMissing.filter((p) => p.approxTime);
     const mergedTimesSel = ponto ? mergedPunchesForDay(key, ordenadasVisiveis, diaPendingComHorarioSel).map((item) => item.timeMs) : [];
 
     // Trabalhado/Falta trabalhar de QUALQUER dia (não só hoje) vêm sempre das

@@ -122,7 +122,17 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
+#dayPanelCard > * { flex-shrink: 0; }
+#addFeriasFolgasBtn {
+  margin-top: auto;
+  background: color-mix(in srgb, var(--green) 10%, var(--card));
+  border-color: color-mix(in srgb, var(--green) 28%, var(--card));
+}
+#addFeriasFolgasBtn:hover { background: color-mix(in srgb, var(--green) 18%, var(--card)); }
+#feriasFolgasList { margin-bottom: 8px; }
 .card-title { font-weight: 600; margin-bottom: 8px; }
 
 .wip-tag { font-weight: 400; font-size: 10.5px; color: var(--muted); }

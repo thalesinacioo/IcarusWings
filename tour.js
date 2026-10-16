@@ -48,10 +48,8 @@ const TOUR_STEPS = [
   {
     id: "ferias-folgas",
     selector: "#addFeriasFolgasBtn",
-    title: "Férias, folgas e abono",
-    text: "Use esse botão pra marcar períodos de férias, folga ou abono no calendário (é só uma anotação sua, não manda nada pro Icarus).",
-    onEnter: openSettingsPopupForTour,
-    onExit: closeSettingsPopupForTour,
+    title: "Abono, folga e férias",
+    text: "Use esse botão pra marcar períodos de abono, folga ou férias (é só uma anotação sua, não manda nada pro Icarus). O que você cadastra aparece na lista do dia correspondente e na cor do calendário.",
   },
   { id: "calendario", selector: "#calendarCard", title: "Calendário", text: "Clique em qualquer dia pra ver os detalhes daquela data. As cores mostram o status de cada dia." },
   { id: "legenda", selector: ".legend", title: "Legenda", text: "Cada cor tem um significado: erro/falta, ajuste manual, ajuste pendente, feriado, férias, folga ou abono." },

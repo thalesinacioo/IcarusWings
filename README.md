@@ -42,8 +42,6 @@ canto inferior direito do painel.
     usar o abono diário — ver "Flexibilização do mês" abaixo)
   - Checkbox "Eu trabalho 6:00h/dia" (jornada reduzida, sem abono — ver
     "Flexibilização do mês" abaixo)
-  - "+ Férias / Folgas / Abono" — marca um período no calendário (rosa),
-    só visual, não manda nada pro Icarus
   - A versão instalada da extensão, com aviso de nova versão disponível
     quando houver uma
   - A largura desse popup acompanha o tamanho do painel, então ele nunca
@@ -117,11 +115,12 @@ No card você vê:
 - **Teto Abono Mês** — o limite calculado pro período que está sendo
   exibido no calendário (se você navegar pro mês passado ou pro próximo,
   o card recalcula sozinho pra aquele período).
-- **Saldo de horas** — vem direto do próprio Icarus (campo já calculado
-  por ele, que leva em conta a flexibilidade de 10min de entrada/saída que
-  a extensão não tem como reproduzir sozinha).
+- **Saldo de horas** — o saldo acumulado no período até ontem, direto do
+  próprio Icarus (campo já calculado por ele, que leva em conta a
+  flexibilidade de 10min de entrada/saída que a extensão não tem como
+  reproduzir sozinha). Hoje fica de fora porque ainda está em andamento.
 - **Abono estimado** — o máximo de horas de abono que você pode usar até
-  agora: soma de 48min por dia útil já decorrido no período, limitado ao
+  ontem: soma de 48min por dia útil já fechado no período, limitado ao
   teto do mês inteiro.
 
 Passe o mouse em "Saldo de horas" pra ver uma nota explicando de onde vem

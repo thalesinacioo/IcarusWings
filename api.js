@@ -190,10 +190,9 @@ const IcarusAPI = {
 
   // Liga/desliga o checkbox "já ajustei no Icarus" de um horário informado
   // manualmente (ajuste que ainda não foi excluído/incluído de verdade lá).
-  // Igual à exclusão pendente, só risca o texto, não tira da lista — quem
-  // tira é reconcilePendingAdjustments (background.js) quando o Icarus
-  // passa a mostrar batidas reais suficientes pra cobrir esse horário
-  // (nesse caso ele já marca `done` sozinho, sem precisar clicar aqui).
+  // Só risca o texto: o ajuste continua no cartão e nas contas até ser
+  // aprovado. Quem tira da lista é reconcilePendingAdjustments
+  // (background.js), quando o Icarus mostra o ajuste aprovado perto desse horário.
   async setPendingAdjustmentDone(dateKeyStr, seq, done) {
     const { pendingAdjustments = {} } = await chrome.storage.local.get({ pendingAdjustments: {} });
     const dayList = pendingAdjustments[dateKeyStr] || [];

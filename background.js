@@ -346,9 +346,17 @@ chrome.notifications.onClicked.addListener((notifId) => {
   });
 });
 
-// Remove entradas de "ajustar depois" que já foram resolvidas de verdade
-// (o dia passou a ter batidas reais suficientes pra cobrir aquele seq —
-// seja porque a pessoa bateu, seja porque um ajuste foi aprovado no Icarus).
+const APPROVED_MATCH_TOLERANCE_MS = 30 * 60000;
+
+const horarioMsOf = (b) => (typeof b.horario === "number" ? b.horario : new Date(b.horario).getTime());
+
+function approxTimeMsOf(dateKeyStr, approxTime) {
+  const [y, m, d] = dateKeyStr.split("-").map(Number);
+  const [hh, mm] = approxTime.split(":").map(Number);
+  return new Date(y, m - 1, d, hh, mm, 0, 0).getTime();
+}
+
+// Remove ajustes pendentes que já foram resolvidos de verdade no Icarus.
 async function reconcilePendingAdjustments(registrosData) {
   if (!registrosData?.pontos?.length) return;
   const pending = await getPendingAdjustments();
@@ -373,21 +381,32 @@ async function reconcilePendingAdjustments(registrosData) {
     // Só some quando o horário exato dela some de vez do Icarus — sinal de
     // que o gestor aprovou a exclusão de verdade — não quando a pessoa
     // marca o checkbox (isso só risca o texto, ver setPendingDeletionDone).
-    // "delete" some da lista quando o horário aprova de verdade (acima). Já
-    // o horário informado manualmente (não-delete) nunca some sozinho — só
-    // marca "done" (mesmo checkbox que a pessoa também pode marcar na mão)
-    // assim que o Icarus passa a ter batidas suficientes cobrindo o slot;
-    // fica registrado na lista, riscado, até ela mesma cancelar/remover.
-    const filtered = pending[key].filter((entry) => entry.type === "delete" ? horariosReais.has(entry.horarioMs) : true);
-    if (filtered.length !== pending[key].length) {
-      changed = true;
-    }
-    for (const entry of filtered) {
-      if (entry.type !== "delete" && entry.seq <= punchCountVisivel && !entry.done) {
-        entry.done = true;
-        changed = true;
-      }
-    }
+    //
+    // Horário informado manualmente some quando o Icarus passa a ter uma
+    // batida NÃO original (ajuste/inclusão aprovado) perto daquele horário:
+    // o pendente laranja vira a batida aprovada, em vez de continuar ocupando
+    // um slot no cartão. Só não-originais pra não casar com uma batida normal
+    // vizinha (ex: volta do almoço 30min depois). Cada batida aprovada
+    // resolve no máximo um pendente (o mais próximo).
+    const aprovadas = (p.pontosHorariosBatidasOrdenados || [])
+      .filter((b) => b.tipoRegistro && b.tipoRegistro !== "O")
+      .map(horarioMsOf);
+    const usadas = new Set();
+    const resolvido = (entry) => {
+      if (entry.type === "delete") return !horariosReais.has(entry.horarioMs);
+      if (!entry.approxTime) return entry.seq <= punchCountVisivel;
+      const alvo = approxTimeMsOf(key, entry.approxTime);
+      let melhor = -1;
+      aprovadas.forEach((t, i) => {
+        if (usadas.has(i) || Math.abs(t - alvo) > APPROVED_MATCH_TOLERANCE_MS) return;
+        if (melhor < 0 || Math.abs(t - alvo) < Math.abs(aprovadas[melhor] - alvo)) melhor = i;
+      });
+      if (melhor < 0) return false;
+      usadas.add(melhor);
+      return true;
+    };
+    const filtered = pending[key].filter((entry) => !resolvido(entry));
+    if (filtered.length !== pending[key].length) changed = true;
     if (filtered.length) pending[key] = filtered;
     else delete pending[key];
   }

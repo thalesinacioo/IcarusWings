@@ -36,8 +36,6 @@
         Eu trabalho 6:00h/dia
       </label>
     </div>
-    <div id="feriasFolgasList" class="ferias-list hidden"></div>
-    <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%; margin-top: 8px;">+ Férias / Folgas / Abono</button>
     <div class="settings-popup-version"><span id="appVersion">—</span></div>
   </div>
 
@@ -99,6 +97,9 @@
       <div id="pendingAdjustmentsToday" class="pending-list hidden"></div>
 
       <div id="dayPanelNota"></div>
+
+      <div id="feriasFolgasList" class="ferias-list hidden"></div>
+      <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%;">Registrar Abono, Folga, Férias</button>
     </section>
 
     <section class="card" id="flexCard">
@@ -108,7 +109,7 @@
           <span class="hs-label">Saldo de horas</span>
           <span id="saldoHoras" class="hs-value">--:--</span>
         </div>
-        <div class="period-summary-item" id="abonoEstimadoBox" tabindex="0" data-tooltip="Esse é o máximo de horas de abono que você pode utilizar até agora.">
+        <div class="period-summary-item" id="abonoEstimadoBox" tabindex="0" data-tooltip="Esse é o máximo de horas de abono que você pode utilizar até ontem.">
           <span class="hs-label">Abono estimado</span>
           <span id="abonoEstimado" class="hs-value">--:--</span>
         </div>
@@ -143,15 +144,15 @@
 
   <div id="feriasFolgasModal" class="modal hidden">
     <div class="modal-box">
-      <div class="modal-title">Férias / Folgas / Abono</div>
+      <div class="modal-title">Abono, Folga, Férias</div>
       <p class="hint" style="margin-top:0">
         Marca o período no calendário (rosa), só pra você visualizar, não manda nada pro Icarus.
       </p>
       <label class="hint" style="display:block; margin-top: 10px;">Tipo</label>
       <select id="feriasFolgasTipo" class="time-input">
-        <option value="ferias">Férias</option>
-        <option value="folga">Folga</option>
         <option value="abono">Abono</option>
+        <option value="folga">Folga</option>
+        <option value="ferias">Férias</option>
       </select>
       <div class="ferias-row">
         <div>
