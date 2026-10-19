@@ -65,7 +65,8 @@ Colorido por dia:
 - 🟠 ponto laranja no canto — dia com um "ajuste pendente" só da extensão
   (ver abaixo)
 
-A legenda abaixo do calendário é só quadradinhos coloridos, sem texto —
+A legenda abaixo do calendário (inclui verde = dia com batidas) é só
+quadradinhos coloridos, sem texto —
 passe o mouse em cada um pra ver o que aquela cor significa.
 
 ### Painel "Batidas de hoje" (ou de um dia selecionado)

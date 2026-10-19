@@ -9,15 +9,15 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="dot"></span>
+      <button id="tourFab" class="tour-fab" data-tooltip="Ver tutorial" aria-label="Ver tutorial">🪽</button>
       <strong id="appTitle">Ponto Icarus</strong>
     </div>
     <div class="topbar-actions">
       <button id="refreshBtn" class="icon-btn" data-tooltip="Atualizar">
-        <span class="refresh-icon">⟳</span>
+        <svg class="refresh-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
         <span class="refresh-check" aria-hidden="true">✓</span>
       </button>
-      <button id="settingsBtn" class="icon-btn" data-tooltip="Configurações">⚙</button>
+      <button id="settingsBtn" class="icon-btn" data-tooltip="Configurações" aria-label="Configurações"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg></button>
     </div>
   </header>
 
@@ -48,6 +48,8 @@
       <span class="btn-emoji" aria-hidden="true">👍</span>
     </button>
 
+    <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%;">Registrar Abono, Folga, Férias</button>
+
     <section class="card" id="calendarCard">
       <div class="calendar-header">
         <button id="prevMonth" class="icon-btn">‹</button>
@@ -59,12 +61,14 @@
       </div>
       <div id="calendarGrid" class="calendar-grid"></div>
       <div class="legend">
-        <span class="legend-swatch red" tabindex="0" data-tooltip="Erro/Falta"></span>
-        <span class="legend-swatch purple" tabindex="0" data-tooltip="Ajuste manual"></span>
+        <span class="legend-swatch green" tabindex="0" data-tooltip="Dia com batidas registradas"></span>
         <span class="legend-swatch orange" tabindex="0" data-tooltip="Ajuste pendente"></span>
-        <span class="legend-swatch holiday" tabindex="0" data-tooltip="Feriado"></span>
-        <span class="legend-swatch ferias" tabindex="0" data-tooltip="Férias programadas"></span>
+        <span class="legend-swatch purple" tabindex="0" data-tooltip="Ajuste manual"></span>
+        <span id="legendPink" class="legend-swatch pink hidden" tabindex="0" data-tooltip="Batida feita pelo Auto registro"></span>
+        <span class="legend-swatch red" tabindex="0" data-tooltip="Erro/Falta"></span>
         <span class="legend-swatch folga" tabindex="0" data-tooltip="Folga programada"></span>
+        <span class="legend-swatch ferias" tabindex="0" data-tooltip="Férias programadas"></span>
+        <span class="legend-swatch holiday" tabindex="0" data-tooltip="Feriado"></span>
         <span class="legend-swatch abono" tabindex="0" data-tooltip="Abono programado"></span>
       </div>
     </section>
@@ -77,9 +81,9 @@
 
       <div class="punches" id="punchesGrid">
         <div class="punch" data-seq="1"><span class="label">1ª</span><span class="value">--:--</span></div>
-        <div class="punch" data-seq="2"><span class="label">2ª</span><span class="value">--:--</span></div>
-        <div class="punch" data-seq="3"><span class="label">3ª</span><span class="value">--:--</span></div>
-        <div class="punch" data-seq="4"><span class="label">4ª</span><span class="value">--:--</span></div>
+        <div class="punch" data-seq="2"><span class="auto-check hidden" data-seq="2" role="button" tabindex="0">✔︎</span><span class="label">2ª</span><span class="value">--:--</span></div>
+        <div class="punch" data-seq="3"><span class="auto-check hidden" data-seq="3" role="button" tabindex="0">✔︎</span><span class="label">3ª</span><span class="value">--:--</span></div>
+        <div class="punch" data-seq="4"><span class="auto-check hidden" data-seq="4" role="button" tabindex="0">✔︎</span><span class="label">4ª</span><span class="value">--:--</span></div>
       </div>
 
       <div class="hours-summary">
@@ -99,7 +103,6 @@
       <div id="dayPanelNota"></div>
 
       <div id="feriasFolgasList" class="ferias-list hidden"></div>
-      <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%;">Registrar Abono, Folga, Férias</button>
     </section>
 
     <section class="card" id="flexCard">
@@ -173,6 +176,20 @@
     </div>
   </div>
 
+  <div id="updateModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-title" id="updateModalTitle">Novidades</div>
+      <div id="updateModalNotes" class="update-notes"></div>
+      <p class="hint update-how">
+        Pra atualizar: se instalou com git, rode <code>git pull</code> na pasta e recarregue a extensão em chrome://extensions. Se instalou por zip, baixe o zip da release e substitua a pasta.
+      </p>
+      <div class="modal-actions">
+        <button id="updateModalLater" class="secondary-btn">Depois</button>
+        <button id="updateModalOpen" class="primary-btn">Ver release</button>
+      </div>
+    </div>
+  </div>
+
   <div id="confirmModal" class="modal hidden">
     <div class="modal-box">
       <div class="modal-title" id="confirmModalTitle">Confirmar</div>
@@ -184,7 +201,20 @@
     </div>
   </div>
 
-  <button id="tourFab" class="tour-fab" data-tooltip="Ver tutorial">🪽</button>
+  <div id="fabGroup" class="fab-group">
+    <button id="achievementsBtn" class="fab-trophy" data-tooltip="Conquistas" aria-label="Conquistas">🏆</button>
+  </div>
+
+  <div id="achievementsModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-title">Conquistas</div>
+      <div class="badge-grid" id="badgeGrid"></div>
+      <p id="achievementsStatus"></p>
+      <div class="modal-actions">
+        <button id="achievementsClose" class="secondary-btn">Fechar</button>
+      </div>
+    </div>
+  </div>
 
   <script src="api.js"></script>
   <script src="sidepanel.js"></script>

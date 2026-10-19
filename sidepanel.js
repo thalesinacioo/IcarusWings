@@ -87,6 +87,10 @@ let currentMonth = new Date().getMonth();
 let currentYear = new Date().getFullYear();
 let registrosPorDia = {}; // "YYYY-MM-DD" -> ponto object
 let pendingAdjustments = {}; // "YYYY-MM-DD" -> [{seq,label,clickedAt}]
+let achievementsEarned = {}; // id -> "YYYY-MM-DD" em que foi conquistada
+let secretKnock = false; // liberado por 5 cliques em "Falta trabalhar"
+let autoMarcadas = {}; // "YYYY-MM-DD" -> [seq] marcadas com o ✔ pra bater sozinhas
+let autoBatidas = {}; // "YYYY-MM-DD" -> [ms] das batidas feitas pelo auto registro
 let feriasFolgasPeriods = []; // [{id, tipo, inicio, fim, nota}]
 let selectedDayKey = null; // null = mostrando hoje
 let liveTimer = null;
@@ -102,6 +106,204 @@ const minutesToHHMM = (min) => {
 };
 const hhmm = (ts) => new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 const capitalizeFirst = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// ---------- conquistas ----------
+
+// Nome e descrição só aparecem na tela depois que a conquista é ganha.
+const ACHIEVEMENTS = [
+  { id: "dias5", emoji: "🏅", name: "Sem choro", desc: "5 dias em sequência sem ajustes" },
+  { id: "mes1", emoji: "🎖️", name: "Certinho", desc: "1 mês em sequência sem ajustes" },
+  { id: "meses3", emoji: "🥉", name: "Relógio suíço", desc: "3 meses em sequência sem ajustes" },
+  { id: "meses6", emoji: "🥈", name: "Lenda do ponto", desc: "6 meses em sequência sem ajustes" },
+  { id: "ano1", emoji: "🥇", name: "Imortal", desc: "1 ano de trabalho em sequência sem ajustes" },
+  { id: "easter", emoji: "🤖", name: "Hacker do ponto", desc: "Você descobriu o auto registro" },
+  { id: "slot", emoji: "🎰", name: "Fuçador", desc: "Você descobriu como espiar uma conquista" },
+  { id: "aj3", emoji: "✏️", name: "Rabisqueiro", desc: "Você tem 3 dias em sequência com ajustes" },
+  { id: "aj6", emoji: "💀", name: "RIP ponto", desc: "Você tem mais de 5 dias em sequência com ajustes" },
+  { id: "auto1", emoji: "🦾", name: "Braço biônico", desc: "Você fez seu primeiro auto registro" },
+  { id: "auto3", emoji: "🚀", name: "Zero esforço", desc: "Você fez 3 auto registros em sequência" },
+  { id: "abono", emoji: "🧾", name: "Abonado", desc: "Você já registrou abono" },
+  { id: "ferias", emoji: "👑", name: "Rei da praia", desc: "Você já registrou férias" },
+  { id: "folga", emoji: "⏰", name: "Soneca", desc: "Você já registrou folga" },
+];
+const ACHIEVEMENT_NAMES = Object.fromEntries(ACHIEVEMENTS.map((a) => [a.id, a.name]));
+let achievementsReady = false;
+
+// Metas em dias úteis: 5 dias fixos; "N meses" = soma dos dias úteis dos N
+// períodos de apuração mais recentes (26 a 25), os mesmos da flexibilização.
+function achievementTargets() {
+  const { start: curStart } = apuracaoPeriodFor(new Date());
+  const somaPeriodos = (n) => {
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+      const { start, end } = apuracaoPeriodFor(new Date(curStart.getFullYear(), curStart.getMonth() - i, 27));
+      total += countBusinessDays(start, end);
+    }
+    return total;
+  };
+  return { dias5: 5, mes1: somaPeriodos(1), meses3: somaPeriodos(3), meses6: somaPeriodos(6), ano1: somaPeriodos(12) };
+}
+
+// Sequência de dias úteis "limpos" (verde: batidas, sem ajuste/abono, sem
+// falta). Fim de semana, feriado e férias/folga/abono marcados pulam sem
+// quebrar. Mês que ainda não foi buscado no Icarus conta como quebra.
+function computeAchievements(mesesBuscados) {
+  const earned = { ...achievementsEarned };
+  const cobertos = new Set(mesesBuscados);
+  const now = new Date();
+  cobertos.add(`${now.getFullYear()}-${pad2(now.getMonth() + 1)}`);
+  const ordenados = [...cobertos].sort();
+  if (!ordenados.length) return earned;
+  const [y, m] = ordenados[0].split("-").map(Number);
+  const targets = achievementTargets();
+  const ontem = new Date();
+  ontem.setHours(0, 0, 0, 0);
+  ontem.setDate(ontem.getDate() - 1);
+  let run = 0;
+  let runAj = 0;
+  for (const d = new Date(y, m - 1, 1); d <= ontem; d.setDate(d.getDate() + 1)) {
+    if (!isBusinessDay(d)) continue;
+    const key = dateKey(d);
+    if (feriasFolgaParaDia(key)) continue;
+    const ponto = registrosPorDia[key];
+    const limpo = cobertos.has(key.slice(0, 7)) && ponto && classifyDay(ponto, false) === "green";
+    run = limpo ? run + 1 : 0;
+    for (const id of Object.keys(targets)) if (!earned[id] && run >= targets[id]) earned[id] = key;
+    // dias seguidos com ajuste/abono registrado no Icarus (roxo)
+    const comAjuste = cobertos.has(key.slice(0, 7)) && ponto && classifyDay(ponto, false) === "purple";
+    runAj = comAjuste ? runAj + 1 : 0;
+    if (!earned.aj3 && runAj >= 3) earned.aj3 = key;
+    if (!earned.aj6 && runAj >= 6) earned.aj6 = key;
+  }
+
+  // auto registro: 1ª batida automática e 3 automáticas seguidas (sem batida manual no meio)
+  const diasAuto = Object.keys(autoBatidas).filter((k) => (autoBatidas[k] || []).length).sort();
+  if (diasAuto.length && !earned.auto1) earned.auto1 = diasAuto[0];
+  if (!earned.auto3) {
+    let seguidas = 0;
+    for (const key of Object.keys(registrosPorDia).sort()) {
+      for (const b of batidasOrdenadas(registrosPorDia[key])) {
+        const auto = (autoBatidas[key] || []).some((t) => Math.abs(t - b.horario) <= 3 * 60000);
+        seguidas = auto ? seguidas + 1 : 0;
+        if (seguidas >= 3 && !earned.auto3) earned.auto3 = key;
+      }
+    }
+  }
+
+  // abono/férias/folga já registrados (data = quando foi cadastrado)
+  for (const p of feriasFolgasPeriods) {
+    if (earned[p.tipo]) continue;
+    const criado = Number(String(p.id).replace("ff_", ""));
+    earned[p.tipo] = Number.isFinite(criado) && criado > 0 ? dateKey(new Date(criado)) : dateKey(new Date());
+  }
+  return earned;
+}
+
+// Easter egg: 5 cliques seguidos numa conquista ainda bloqueada mostram
+// nome, descrição e emoji (em cinza claro) por 7s.
+let badgePeekId = null;
+let badgePeekTimer = null;
+let badgeClicks = 0;
+let badgeClickTimer = null;
+function setupBadgePeek() {
+  $("#badgeGrid").addEventListener("click", (ev) => {
+    const item = ev.target.closest(".badge-item");
+    if (!item || item.classList.contains("earned")) return;
+    badgeClicks++;
+    clearTimeout(badgeClickTimer);
+    badgeClickTimer = setTimeout(() => { badgeClicks = 0; }, 1500);
+    if (badgeClicks < 5) return;
+    badgeClicks = 0;
+    badgePeekId = item.dataset.id;
+    renderAchievements();
+    clearTimeout(badgePeekTimer);
+    badgePeekTimer = setTimeout(() => { badgePeekId = null; renderAchievements(); }, 7000);
+    grantAchievement("slot");
+  });
+}
+
+function renderAchievements() {
+  const grid = $("#badgeGrid");
+  grid.innerHTML = ACHIEVEMENTS.map((a) => {
+    const dia = achievementsEarned[a.id];
+    const espiando = !dia && a.id === badgePeekId;
+    return `<div class="badge-item${dia ? " earned" : ""}${espiando ? " peek" : ""}" data-id="${a.id}">
+      <span class="badge-emoji">${a.emoji}</span>
+      <span class="badge-name">${dia || espiando ? a.name : "???"}</span>
+      <span class="badge-desc">${dia || espiando ? a.desc : ""}</span>
+      <span class="badge-date">${dia ? fmtDDMMYYYY(dia) : ""}</span>
+    </div>`;
+  }).join("");
+}
+
+async function saveAchievements(novas) {
+  const conquistadas = Object.keys(novas).filter((id) => !achievementsEarned[id]);
+  achievementsEarned = novas;
+  await chrome.storage.local.set({ achievementsEarned });
+  renderAchievements();
+  conquistadas.forEach((id) => showStatus(`Conquista desbloqueada: ${ACHIEVEMENT_NAMES[id]}`, "info", 5000));
+}
+
+async function refreshAchievements() {
+  if (!achievementsReady) return;
+  const { achievementMonthsDone = [] } = await chrome.storage.local.get("achievementMonthsDone");
+  await saveAchievements(computeAchievements(achievementMonthsDone));
+}
+
+async function grantAchievement(id) {
+  if (!achievementsReady || achievementsEarned[id]) return;
+  await saveAchievements({ ...achievementsEarned, [id]: dateKey(new Date()) });
+}
+
+// Busca os últimos 13 meses no Icarus (mês a mês, o mesmo método da busca
+// normal) pra poder calcular sequências longas. Meses já buscados e fechados
+// não são buscados de novo; só o mês passado (que ainda pode receber ajustes).
+let achievementsSyncing = false;
+let achievementsSyncedAt = 0;
+async function syncAchievementHistory() {
+  if (achievementsSyncing || Date.now() - achievementsSyncedAt < 30 * 60000) return;
+  achievementsSyncing = true;
+  const statusEl = $("#achievementsStatus");
+  setSyncing(true);
+  let buscou = false;
+  try {
+    const { achievementMonthsDone = [] } = await chrome.storage.local.get("achievementMonthsDone");
+    const done = new Set(achievementMonthsDone);
+    const now = new Date();
+    const alvo = [];
+    for (let i = 1; i <= 13; i++) {
+      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const mk = `${m.getFullYear()}-${pad2(m.getMonth() + 1)}`;
+      if (i === 1 || !done.has(mk)) alvo.push({ m, mk });
+    }
+    let n = 0;
+    for (const { m, mk } of alvo) {
+      statusEl.textContent = `Buscando histórico… ${++n}/${alvo.length}`;
+      await IcarusAPI.searchPeriod(m, new Date(m.getFullYear(), m.getMonth() + 1, 0));
+      await new Promise((r) => setTimeout(r, 1300));
+      const { data } = await IcarusAPI.getLastRegistros();
+      if (data) ingestRegistros(data);
+      buscou = true;
+      done.add(mk);
+      await chrome.storage.local.set({ achievementMonthsDone: [...done] });
+      await saveAchievements(computeAchievements([...done]));
+    }
+    achievementsSyncedAt = Date.now();
+    statusEl.textContent = "";
+  } catch (err) {
+    statusEl.textContent = "Não consegui buscar o histórico agora. Confira se o Icarus está logado.";
+  } finally {
+    achievementsSyncing = false;
+    setSyncing(false);
+    if (buscou) fetchMonth(); // devolve os dados do mês em exibição
+  }
+}
+
+function openAchievementsModal() {
+  $("#achievementsModal").classList.remove("hidden");
+  renderAchievements();
+  syncAchievementHistory();
+}
 
 // ---------- tooltip genérico (substitui o `title` nativo em todo lugar:
 // aparece instantâneo, nunca corta na borda do painel, não muda o cursor).
@@ -391,10 +593,59 @@ async function loadPendingAdjustments() {
   renderDayPanel();
 }
 
+function applySecretKnock(on) {
+  secretKnock = on;
+  $("#legendPink").classList.toggle("hidden", !on);
+  renderDayPanel();
+}
+
+// 5 cliques seguidos (no máximo 1,5s entre um e outro) em "Falta trabalhar".
+function setupSecretKnock() {
+  let cliques = 0;
+  let timer = null;
+  $("#remainingToday").parentElement.addEventListener("click", async () => {
+    cliques++;
+    clearTimeout(timer);
+    timer = setTimeout(() => { cliques = 0; }, 1500);
+    if (cliques < 5) return;
+    cliques = 0;
+    const ativo = !secretKnock;
+    const patch = { secretKnockAtivo: ativo };
+    if (!ativo) patch.autoRegistroMarcadas = {};
+    await chrome.storage.local.set(patch);
+    applySecretKnock(ativo);
+    if (ativo) grantAchievement("easter");
+    showStatus(ativo ? "Modo extra ativado" : "Modo extra desativado", "info", 2500);
+    if (ativo) setTimeout(() => window.IcarusTour?.startSecretTour(), 300);
+  });
+}
+
+async function loadAutoMarcadas() {
+  autoMarcadas = await IcarusAPI.getAutoRegistroMarcadas();
+  renderDayPanel();
+}
+
+function updateAutoCheckTooltip(chk) {
+  const card = chk.closest(".punch");
+  const marcada = chk.classList.contains("armed");
+  const valor = card.querySelector(".value").textContent.replace("~", "");
+  const aprox = /\d/.test(valor) ? `por volta de ${valor}` : "no horário previsto, depois da 1ª batida";
+  chk.dataset.tooltip = marcada
+    ? `Auto registro marcado: o ponto será batido sozinho ${aprox}. Clique pra desmarcar.`
+    : `Clique pra bater esta batida automaticamente ${aprox}.`;
+}
+
+async function loadAutoBatidas() {
+  autoBatidas = await IcarusAPI.getAutoRegistroBatidas();
+  renderDayPanel();
+  refreshAchievements();
+}
+
 async function loadFeriasFolgasPeriods() {
   feriasFolgasPeriods = await IcarusAPI.getFeriasFolgasPeriods();
   renderFeriasFolgasList();
   renderCalendar();
+  refreshAchievements();
 }
 
 function fmtDDMMYYYY(key) {
@@ -473,18 +724,30 @@ function loadMonth() {
   fetchFlexibilizacao();
 }
 
+// Gira o ícone de atualizar enquanto alguma busca no Icarus está em andamento
+// (contador: fetchMonth e fetchFlexibilizacao podem se sobrepor).
+let syncCount = 0;
+function setSyncing(on) {
+  syncCount = Math.max(0, syncCount + (on ? 1 : -1));
+  $("#refreshBtn").classList.toggle("syncing", syncCount > 0);
+}
+
 async function fetchMonth() {
   const first = new Date(currentYear, currentMonth, 1);
   const last = new Date(currentYear, currentMonth + 1, 0);
   $("#monthLabel").textContent = capitalizeFirst(first.toLocaleDateString("pt-BR", { month: "long", year: "numeric" }));
 
+  setSyncing(true);
   try {
     await IcarusAPI.searchPeriod(first, last);
     await new Promise((r) => setTimeout(r, 1200));
     const { data } = await IcarusAPI.getLastRegistros();
     if (data) ingestRegistros(data);
+    setSyncing(false);
+    refreshAchievements();
     playRefreshSuccessAnimation();
   } catch (err) {
+    setSyncing(false);
     showSearchError(err);
   }
 }
@@ -656,6 +919,7 @@ function showFlexibilizacaoInstant() {
 
 async function fetchFlexibilizacao() {
   const { start, end, tetoMin } = showFlexibilizacaoInstant();
+  setSyncing(true);
   try {
     await IcarusAPI.searchPeriod(start, end);
     await new Promise((r) => setTimeout(r, 1200));
@@ -663,6 +927,8 @@ async function fetchFlexibilizacao() {
     if (data) ingestRegistros(data);
   } catch (err) {
     return; // já mostrou o que tinha em cache, não tem mais nada a fazer
+  } finally {
+    setSyncing(false);
   }
   renderFlexibilizacaoFromCache(start, end, tetoMin);
 }
@@ -682,8 +948,43 @@ function compareVersions(a, b) {
 // Aviso de "nova versão disponível" — vira mais uma linha na mesma pilha
 // do status, mas ancorada na engrenagem (é lá que fica a versão), não no
 // Atualizar — assim a flechinha indica o botão certo pra clicar.
-function showUpdateNotice(latest, url) {
-  showNotificationRow("update", { text: `Nova versão disponível (v${latest})`, href: url, type: "update", closable: true, anchor: "#settingsBtn" });
+function showUpdateNotice(latest, url, release) {
+  showNotificationRow("update", { text: `Nova versão disponível (v${latest})`, onClick: () => openUpdateModal(latest, url, release), type: "update", closable: true, anchor: "#settingsBtn" });
+}
+
+// Texto da release (markdown simples: títulos, listas, **negrito**, `código`)
+// virando HTML seguro — tudo escapado antes de aplicar a formatação.
+function releaseNotesToHtml(md) {
+  const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code>$1</code>");
+  let html = "";
+  let emLista = false;
+  for (const linha of (md || "").split(/\r?\n/)) {
+    const l = linha.trim();
+    const item = /^[-*]\s+(.*)/.exec(l);
+    if (item) {
+      if (!emLista) { html += "<ul>"; emLista = true; }
+      html += `<li>${inline(item[1])}</li>`;
+      continue;
+    }
+    if (emLista) { html += "</ul>"; emLista = false; }
+    const titulo = /^#{1,6}\s+(.*)/.exec(l);
+    if (titulo) html += `<h4>${inline(titulo[1])}</h4>`;
+    else if (l) html += `<p>${inline(l)}</p>`;
+  }
+  if (emLista) html += "</ul>";
+  return html || "<p>Veja os detalhes na página da release.</p>";
+}
+
+function openUpdateModal(latest, url, release) {
+  $("#updateModalTitle").textContent = `Novidades da v${latest}`;
+  $("#updateModalNotes").innerHTML = releaseNotesToHtml(release?.body);
+  $("#updateModalOpen").onclick = () => { window.open(url, "_blank", "noopener"); closeUpdateModal(); };
+  $("#updateModal").classList.remove("hidden");
+  chrome.storage.local.set({ updateNotesSeenVersion: latest });
+}
+function closeUpdateModal() {
+  $("#updateModal").classList.add("hidden");
 }
 
 async function checkForUpdate() {
@@ -697,7 +998,10 @@ async function checkForUpdate() {
     const latest = (release.tag_name || "").replace(/^v/, "");
     if (latest && compareVersions(latest, current) > 0) {
       versionEl.innerHTML = `Versão atual: v${current} · <a href="${release.html_url}" target="_blank" rel="noopener">Nova versão disponível (v${latest})</a>`;
-      showUpdateNotice(latest, release.html_url);
+      showUpdateNotice(latest, release.html_url, release);
+      // mostra o popup de novidades sozinho uma vez por versão nova
+      const { updateNotesSeenVersion } = await chrome.storage.local.get("updateNotesSeenVersion");
+      if (updateNotesSeenVersion !== latest) openUpdateModal(latest, release.html_url, release);
     }
   } catch (err) {
     // sem internet — mantém só a versão instalada, sem travar nada
@@ -718,7 +1022,11 @@ async function loadNomeColaborador() {
     const mutuario = await IcarusAPI.getLastMutuario();
     const turno = await IcarusAPI.getLastTurno();
     const nome = mutuario?.pessoa?.nome || turno?.mutuario?.pessoa?.nome;
-    if (nome) $("#appTitle").textContent = nome;
+    if (nome) {
+      // só o primeiro nome e o último sobrenome, pra caber numa linha
+      const partes = nome.trim().split(/\s+/);
+      $("#appTitle").textContent = partes.length > 2 ? `${partes[0]} ${partes[partes.length - 1]}` : nome;
+    }
   } catch (err) {
     // sem dado ainda — mantém o fallback "Ponto Icarus"
   }
@@ -874,16 +1182,25 @@ function renderDayPanel() {
   // 4 batidas (compacto) — reais (já sem as marcadas p/ exclusão) e
   // pendentes juntas, em ordem cronológica real
   const merged = mergedPunchesForDay(key, ordenadasVisiveis, diaPendingMissing);
+  const periodoDia = feriasFolgaParaDia(key);
   document.querySelectorAll(".punch").forEach((el) => {
     const seq = Number(el.dataset.seq);
     const item = merged[seq - 1];
     const valueEl = el.querySelector(".value");
-    el.classList.remove("manual", "pending", "fillable", "deletable", "predicted");
+    el.classList.remove("manual", "pending", "fillable", "deletable", "predicted", "auto-punch", "manual-punch", "dia-ferias", "dia-folga", "dia-abono");
+    // dia de férias/folga/abono: os cartões assumem a cor do tipo (ganha de rosa/verde)
+    if (periodoDia) el.classList.add(`dia-${periodoDia.tipo}`);
     el.onclick = null;
     if (item?.real) {
       const b = item.real;
       valueEl.textContent = b.horarioFormatadoSemData || "--:--";
       el.classList.toggle("manual", isBatidaManual(b));
+      if (!isBatidaManual(b) && !periodoDia) {
+        // batida original: rosa se foi o auto registro (instante bate com a
+        // batida em até 3min), verde se foi bater na mão
+        const automatica = (autoBatidas[key] || []).some((t) => Math.abs(t - b.horario) <= 3 * 60000);
+        el.classList.add(automatica ? "auto-punch" : "manual-punch");
+      }
       el.classList.add("deletable");
       el.dataset.tooltip = `${b.marcacaoFmt || ""}${isBatidaManual(b) ? ` · ${b.tipoRegistroFmt}` : ""} · Clique pra marcar como pendente de exclusão.`;
       el.onclick = () => markPunchPendingDeletion(key, seq, b);
@@ -908,6 +1225,14 @@ function renderDayPanel() {
       el.classList.add("fillable");
       el.dataset.tooltip = "Batida não registrada. Clique pra informar o horário aproximado.";
       el.onclick = () => openPunchTimeModal(key, seq, label, null);
+    }
+
+    // ✔ do Auto registro: só hoje, só 2ª/3ª/4ª, e só enquanto a batida ainda
+    // não existe (nem real, nem ajuste pendente ocupando o slot)
+    const chk = el.querySelector(".auto-check");
+    if (chk) {
+      chk.classList.toggle("hidden", !(secretKnock && isToday && seq >= 2 && !item?.real && !item?.pending));
+      chk.classList.toggle("armed", (autoMarcadas[key] || []).includes(seq));
     }
   });
 
@@ -1380,6 +1705,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     tickLive();
   });
 
+  document.querySelectorAll(".auto-check").forEach((chk) => {
+    const seq = Number(chk.dataset.seq);
+    const toggle = async (ev) => {
+      ev.stopPropagation();
+      await IcarusAPI.toggleAutoRegistroMarcada(dateKey(new Date()), seq);
+    };
+    chk.addEventListener("click", toggle);
+    chk.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(ev); } });
+    // roda no próprio elemento, antes do tooltip global ler o data-tooltip
+    chk.addEventListener("mouseover", () => updateAutoCheckTooltip(chk));
+    chk.addEventListener("focus", () => updateAutoCheckTooltip(chk));
+  });
+
   $("#settingsBtn").addEventListener("click", (ev) => {
     ev.stopPropagation();
     toggleSettingsPopup();
@@ -1411,6 +1749,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   $("#addFeriasFolgasBtn").addEventListener("click", openFeriasFolgasModal);
   $("#feriasFolgasCancel").addEventListener("click", closeFeriasFolgasModal);
+  $("#updateModalLater").addEventListener("click", closeUpdateModal);
+  $("#achievementsBtn").addEventListener("click", openAchievementsModal);
+  $("#achievementsClose").addEventListener("click", () => $("#achievementsModal").classList.add("hidden"));
+  $("#achievementsModal").addEventListener("click", (ev) => {
+    if (ev.target === ev.currentTarget) ev.currentTarget.classList.add("hidden");
+  });
   $("#feriasFolgasSave").addEventListener("click", saveFeriasFolgasModal);
 
   $("#confirmModalCancel").addEventListener("click", () => closeConfirm(false));
@@ -1421,6 +1765,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (url && url.includes("/ponto/consultarRegistrosPonto") && data) ingestRegistros(data);
   });
   document.addEventListener("icarus:pendingAdjustmentsChanged", loadPendingAdjustments);
+  document.addEventListener("icarus:autoBatidasChanged", loadAutoBatidas);
+  document.addEventListener("icarus:autoMarcadasChanged", loadAutoMarcadas);
 
   // 1) recupera o que já tinha sido visto na última vez que o painel foi
   // aberto — sem isso, cada reabertura começa com registrosPorDia vazio e
@@ -1434,6 +1780,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderDayPanel();
   loadPendingAdjustments();
   loadFeriasFolgasPeriods();
+  loadAutoBatidas();
+  setupSecretKnock();
+  setupBadgePeek();
+  ({ achievementsEarned = {} } = await chrome.storage.local.get({ achievementsEarned: {} }));
+  achievementsReady = true;
+  renderAchievements();
+  refreshAchievements();
+  const { secretKnockAtivo } = await chrome.storage.local.get({ secretKnockAtivo: false });
+  applySecretKnock(secretKnockAtivo);
+  loadAutoMarcadas();
   showFlexibilizacaoInstant();
   checkForUpdate();
   loadNomeColaborador();

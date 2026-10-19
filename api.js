@@ -113,6 +113,27 @@ const IcarusAPI = {
     await chrome.storage.local.set({ jornada6hConfig: ativo });
   },
 
+  // { "YYYY-MM-DD": [ms, ...] } instantes das batidas feitas pelo auto registro.
+  async getAutoRegistroBatidas() {
+    const { autoRegistroBatidas } = await chrome.storage.local.get({ autoRegistroBatidas: {} });
+    return autoRegistroBatidas;
+  },
+
+  // Auto registro por batida: o ✔ no canto do cartão marca a 2ª/3ª/4ª batida
+  // de hoje pra ser batida sozinha (ver background.js, runAutoPunch).
+  // { "YYYY-MM-DD": [seq, ...] } — só guarda o dia de hoje.
+  async getAutoRegistroMarcadas() {
+    const { autoRegistroMarcadas } = await chrome.storage.local.get({ autoRegistroMarcadas: {} });
+    return autoRegistroMarcadas;
+  },
+  async toggleAutoRegistroMarcada(dateKeyStr, seq) {
+    const { autoRegistroMarcadas = {} } = await chrome.storage.local.get({ autoRegistroMarcadas: {} });
+    const lista = autoRegistroMarcadas[dateKeyStr] || [];
+    const nova = lista.includes(seq) ? lista.filter((x) => x !== seq) : [...lista, seq].sort();
+    await chrome.storage.local.set({ autoRegistroMarcadas: { [dateKeyStr]: nova } });
+    return nova.includes(seq);
+  },
+
   // Preenche o período na tela real e clica em "Pesquisar" — os dados
   // chegam de volta via o evento "icarus:observed" (resposta real do site).
   async searchPeriod(dataInicioDate, dataFimDate) {
@@ -250,5 +271,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes.pendingAdjustments) {
     document.dispatchEvent(new CustomEvent("icarus:pendingAdjustmentsChanged"));
+  }
+  if (changes.autoRegistroMarcadas) {
+    document.dispatchEvent(new CustomEvent("icarus:autoMarcadasChanged"));
+  }
+  if (changes.autoRegistroBatidas) {
+    document.dispatchEvent(new CustomEvent("icarus:autoBatidasChanged"));
   }
 });

@@ -59,6 +59,16 @@ async function getJornada6hConfig() {
   return jornada6hConfig;
 }
 
+// Batidas (2/3/4) marcadas com o check ✔ no painel pra bater sozinhas hoje —
+// { "YYYY-MM-DD": [seq, ...] }. Cada batida é uma escolha do dia: nada fica
+// ligado "pra sempre".
+async function getAutoMarcadas(dayKey) {
+  const { secretKnockAtivo } = await chrome.storage.local.get({ secretKnockAtivo: false });
+  if (!secretKnockAtivo) return [];
+  const { autoRegistroMarcadas = {} } = await chrome.storage.local.get("autoRegistroMarcadas");
+  return (autoRegistroMarcadas[dayKey] || []).map(Number);
+}
+
 async function getTodayPonto() {
   const { lastRegistros } = await chrome.storage.local.get("lastRegistros");
   const todayKey = dateKeyOf(new Date());
@@ -124,16 +134,22 @@ async function computePredictedPunchTimes() {
 // nome existente substitui, então não precisa limpar antes de recriar.
 async function scheduleDynamicPunchReminders() {
   const predicted = await computePredictedPunchTimes();
+  const marcadas = await getAutoMarcadas(dateKeyOf(new Date()));
   const now = Date.now();
   for (const seq of [2, 3, 4]) {
     const name10 = `punchPred_${seq}_10`;
     const name5 = `punchPred_${seq}_5`;
+    const nameAuto = `autoPunch_${seq}`;
     const when = predicted?.[seq];
     if (!when) {
       await chrome.alarms.clear(name10);
       await chrome.alarms.clear(name5);
+      await chrome.alarms.clear(nameAuto);
       continue;
     }
+    // Auto registro: alarme no próprio horário previsto (só se ligado).
+    if (marcadas.includes(seq) && when > now) chrome.alarms.create(nameAuto, { when });
+    else await chrome.alarms.clear(nameAuto);
     const t10 = when - 10 * 60000;
     const t5 = when - 5 * 60000;
     if (t10 > now) chrome.alarms.create(name10, { when: t10 });
@@ -154,7 +170,7 @@ chrome.runtime.onStartup.addListener(() => {
 // Mudou o intervalo de almoço ou o "8:48 hoje" no painel (checkbox) —
 // recalcula os lembretes 10min/5min na hora, sem esperar a próxima batida real.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && (changes.almocoMinConfig || changes.jornada848Config || changes.jornada6hConfig))
+  if (area === "local" && (changes.almocoMinConfig || changes.jornada848Config || changes.jornada6hConfig || changes.autoRegistroMarcadas || changes.secretKnockAtivo))
     scheduleDynamicPunchReminders();
 });
 
@@ -171,10 +187,14 @@ async function scheduleAllAlarms() {
 chrome.alarms.onAlarm.addListener((alarm) => {
   const p = /^punchPred_(\d)_(10|5)$/.exec(alarm.name);
   if (p) notifyUpcomingPunch(Number(p[1]), Number(p[2]));
+  const a = /^autoPunch_(\d)$/.exec(alarm.name);
+  if (a) runAutoPunch(Number(a[1]), alarm.scheduledTime);
 });
 
 // Aviso "faltam N minutos" pras batidas 2/3/4, no horário previsto — some
-// sozinho (não é requireInteraction, é só um heads-up).
+// sozinho (não é requireInteraction, é só um heads-up). Com a batida marcada
+// pra Auto registro (✔ no painel), o aviso vira "vai bater automaticamente" com botão de pular; o de
+// 5min ainda confere se o Icarus está logado (ver notifyAutoPunchWarning).
 async function notifyUpcomingPunch(seq, minutesBefore) {
   const times = await getTodayPunchTimesMs();
   if (times.length >= seq) return; // já bateu, nada a avisar
@@ -182,6 +202,11 @@ async function notifyUpcomingPunch(seq, minutesBefore) {
   const todayKey = dateKeyOf(new Date());
   const pending = await getPendingAdjustments();
   if ((pending[todayKey] || []).some((p) => p.seq === seq)) return; // já marcou "ajustar depois"
+
+  if ((await getAutoMarcadas(todayKey)).includes(seq)) {
+    const when = (await computePredictedPunchTimes())?.[seq];
+    if (when && (await notifyAutoPunchWarning(seq, minutesBefore, when, todayKey))) return;
+  }
 
   const entry = PUNCH_SCHEDULE.find((p) => p.seq === seq);
   const label = entry?.label || `${seq}ª batida`;
@@ -192,6 +217,168 @@ async function notifyUpcomingPunch(seq, minutesBefore) {
     message: `Faltam ${minutesBefore}min pro horário previsto de: ${label}.`,
     priority: 1,
   });
+}
+
+// ---------- auto registro ----------
+// Bate 2ª/3ª/4ª batida sozinho no horário previsto, só depois da 1ª batida
+// real do dia. Sempre avisa 10min e 5min antes (com botão "Pular"); o aviso
+// de 5min confere se o Icarus está logado e, se não estiver, avisa que o
+// registro automático NÃO vai acontecer (e então não tenta). Só funciona com
+// o Chrome aberto.
+
+const AUTO_LABEL = { 2: "1ª saída", 3: "2ª entrada", 4: "2ª saída" };
+const AUTO_MAX_ATRASO_MS = 10 * 60000; // alarme atrasado (Mac dormindo): não bate fora de hora
+const AUTO_TRAVA_MS = 3 * 60000; // nunca duas batidas coladas
+const AUTO_ERROS_ANTES_DO_CLIQUE = ["NOT_LOGGED_IN", "WRONG_ROUTE", "PAGE_NOT_READY", "TAB_LOAD_TIMEOUT", "TAB_UNREACHABLE", "TIMEOUT"];
+
+const hhmmOf = (ms) => new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// { "YYYY-MM-DD": { "2": "pulou" | "sem-sessao" } } — só guarda o dia de hoje.
+async function getAutoSkip(dayKey, seq) {
+  const { autoRegistroPuladas = {} } = await chrome.storage.local.get("autoRegistroPuladas");
+  return autoRegistroPuladas[dayKey]?.[seq] || null;
+}
+async function setAutoSkip(dayKey, seq, motivo) {
+  const { autoRegistroPuladas = {} } = await chrome.storage.local.get("autoRegistroPuladas");
+  const hoje = { ...(autoRegistroPuladas[dayKey] || {}), [seq]: motivo };
+  await chrome.storage.local.set({ autoRegistroPuladas: { [dayKey]: hoje } });
+}
+
+// Resultado das ações de UI disparadas pelo background (o painel não está
+// no meio). Resolvido em UI_ACTION_RESULT, abaixo.
+const autoPending = new Map();
+function runAutoAction(action, params = {}, timeoutMs = 40000) {
+  return new Promise((resolve) => {
+    const requestId = `auto_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const timer = setTimeout(() => {
+      autoPending.delete(requestId);
+      resolve({ ok: false, code: "TIMEOUT", error: "Tempo esgotado esperando a aba do Icarus." });
+    }, timeoutMs);
+    autoPending.set(requestId, (res) => {
+      clearTimeout(timer);
+      resolve(res);
+    });
+    sendToTab({ source: MSG_NS, type: "UI_ACTION", payload: { requestId, action, params } }).then((sent) => {
+      if (sent.ok) return;
+      clearTimeout(timer);
+      autoPending.delete(requestId);
+      resolve(sent);
+    });
+  });
+}
+
+function searchTodayAction() {
+  const d = new Date();
+  const fmt = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+  return runAutoAction("search", { dataInicioDDMMYYYY: fmt, dataFimDDMMYYYY: fmt });
+}
+
+function notifyAuto(id, title, message, { interaction = false, buttons } = {}) {
+  chrome.notifications.create(id, {
+    type: "basic",
+    iconUrl: "icons/icon128.png",
+    title,
+    message,
+    priority: 2,
+    requireInteraction: interaction,
+    ...(buttons ? { buttons } : {}),
+  });
+}
+
+// Devolve true se já mostrou o aviso do auto registro (quem chamou não
+// precisa mostrar o aviso comum).
+async function notifyAutoPunchWarning(seq, minutesBefore, when, todayKey) {
+  if (await getAutoSkip(todayKey, seq)) return true; // já pulou/já avisou que não vai: sem mais avisos
+  const label = AUTO_LABEL[seq] || `${seq}ª batida`;
+  const hora = hhmmOf(when);
+
+  if (minutesBefore === 5) {
+    const sessao = await runAutoAction("checkSession");
+    if (!sessao.ok) {
+      await setAutoSkip(todayKey, seq, "sem-sessao");
+      notifyAuto(
+        `autoNoSession_${todayKey}_${seq}`,
+        "Auto registro NÃO vai acontecer",
+        `Você não está logado no Icarus, então o registro automático das ${hora} (${label}) não vai acontecer. Clique aqui pra fazer login e bata manualmente.`,
+        { interaction: true }
+      );
+      return true;
+    }
+  }
+
+  notifyAuto(
+    `punchPred_${todayKey}_${seq}_${minutesBefore}`,
+    "Auto registro",
+    `Vai bater o ponto automaticamente às ${hora} (${label}), em ${minutesBefore} min.`,
+    { buttons: [{ title: "Pular esta batida" }] }
+  );
+  return true;
+}
+
+chrome.notifications.onButtonClicked.addListener(async (notifId, buttonIndex) => {
+  const m = /^punchPred_(\d{4}-\d{2}-\d{2})_(\d)_(?:10|5)$/.exec(notifId);
+  if (!m || buttonIndex !== 0) return;
+  const [, dayKey, seq] = m;
+  await setAutoSkip(dayKey, seq, "pulou");
+  chrome.notifications.clear(notifId);
+  notifyAuto(`autoSkipped_${dayKey}_${seq}`, "Auto registro", `Pulei a batida automática (${AUTO_LABEL[seq] || seq + "ª batida"}). Bata manualmente.`);
+});
+
+chrome.notifications.onClicked.addListener((notifId) => {
+  if (!/^autoNoSession_/.test(notifId)) return;
+  chrome.notifications.clear(notifId);
+  focusIcarusTab();
+});
+
+async function runAutoPunch(seq, scheduledTime = Date.now()) {
+  const todayKey = dateKeyOf(new Date());
+  if (!(await getAutoMarcadas(todayKey)).includes(seq)) return;
+  if (await getAutoSkip(todayKey, seq)) return; // pulou ou já foi avisado que não vai
+  const label = AUTO_LABEL[seq] || `${seq}ª batida`;
+  const idBase = `autoPunch_${todayKey}_${seq}`;
+
+  if (Date.now() - scheduledTime > AUTO_MAX_ATRASO_MS) {
+    notifyAuto(`${idBase}_late`, "Auto registro não bateu", `Perdi o horário da ${label} (o navegador estava parado). Bata manualmente.`, { interaction: true });
+    return;
+  }
+
+  // dado fresco: confere o que o Icarus tem agora antes de decidir
+  const busca = await searchTodayAction();
+  if (!busca.ok) {
+    notifyAuto(`${idBase}_err`, "Auto registro não bateu", `Não consegui consultar o Icarus (${busca.error}). Nada foi batido, bata a ${label} manualmente.`, { interaction: true });
+    return;
+  }
+  await sleep(2000);
+  const times = await getTodayPunchTimesMs();
+  if (times.length === 0 || times.length >= seq) return; // sem 1ª batida ou já bateu: nada a fazer
+  if (times.length < seq - 1) {
+    notifyAuto(`${idBase}_order`, "Auto registro não bateu", `Faltam batidas anteriores no dia, então não bati a ${label}. Confira e bata manualmente.`, { interaction: true });
+    return;
+  }
+
+  const { autoRegistroUltima = 0 } = await chrome.storage.local.get("autoRegistroUltima");
+  if (Date.now() - Math.max(autoRegistroUltima, times[times.length - 1]) < AUTO_TRAVA_MS) return;
+  await chrome.storage.local.set({ autoRegistroUltima: Date.now() });
+
+  const res = await runAutoAction("baterPonto", {}, 45000);
+  if (!res.ok) {
+    const nadaBatido = AUTO_ERROS_ANTES_DO_CLIQUE.includes(res.code);
+    notifyAuto(
+      `${idBase}_err`,
+      "Auto registro falhou",
+      `${res.error || "Erro ao registrar."} ${nadaBatido ? "Nada foi batido." : "Confira no Icarus se o ponto foi batido."} Bata a ${label} manualmente se precisar.`,
+      { interaction: true }
+    );
+    return;
+  }
+  // guarda o instante pra o painel pintar essa batida de rosa (batida automática)
+  const { autoRegistroBatidas = {} } = await chrome.storage.local.get("autoRegistroBatidas");
+  autoRegistroBatidas[todayKey] = [...(autoRegistroBatidas[todayKey] || []), Date.now()];
+  await chrome.storage.local.set({ autoRegistroBatidas });
+  notifyAuto(`${idBase}_ok`, "Ponto registrado automaticamente", `${label} às ${hhmmOf(Date.now())}.`);
+  await sleep(1500);
+  await searchTodayAction(); // atualiza os dados (e os alarmes seguintes)
 }
 
 // ---------- gerencia a aba do Icarus (usada pelas ações vindas do painel) ----------
@@ -413,6 +600,18 @@ async function reconcilePendingAdjustments(registrosData) {
   if (changed) await setPendingAdjustments(pending);
 }
 
+async function focusIcarusTab() {
+  const current = await chrome.windows.getCurrent().catch(() => null);
+  const all = await chrome.tabs.query({ url: ICARUS_URL_PATTERN });
+  const tab = (current && all.find((t) => t.windowId === current.id)) || all[0];
+  if (tab) {
+    await chrome.tabs.update(tab.id, { active: true, pinned: false }).catch(() => {});
+    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  } else {
+    await chrome.tabs.create({ url: "https://web.pontoicarus.com.br/ponto", active: true }).catch(() => {});
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || msg.source !== MSG_NS) return;
 
@@ -442,6 +641,12 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 
   if (msg.type === "UI_ACTION_RESULT") {
+    const resolver = autoPending.get(msg.payload?.requestId);
+    if (resolver) {
+      autoPending.delete(msg.payload.requestId);
+      resolver(msg.payload);
+      return;
+    }
     forwardToSidepanel(msg);
     return;
   }
@@ -463,17 +668,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "FOCUS_ICARUS_TAB") {
     // "Fazer login" no balão de erro: traz a aba do Icarus pra frente na
     // janela atual (ou abre uma nova) — nunca loga sozinho, só dá acesso.
-    (async () => {
-      const current = await chrome.windows.getCurrent().catch(() => null);
-      const all = await chrome.tabs.query({ url: ICARUS_URL_PATTERN });
-      const tab = (current && all.find((t) => t.windowId === current.id)) || all[0];
-      if (tab) {
-        await chrome.tabs.update(tab.id, { active: true, pinned: false }).catch(() => {});
-        await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
-      } else {
-        await chrome.tabs.create({ url: "https://web.pontoicarus.com.br/ponto", active: true }).catch(() => {});
-      }
-    })();
+    focusIcarusTab();
     return;
   }
 });

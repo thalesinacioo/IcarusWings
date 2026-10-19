@@ -52,7 +52,7 @@ const TOUR_STEPS = [
     text: "Use esse botão pra marcar períodos de abono, folga ou férias (é só uma anotação sua, não manda nada pro Icarus). O que você cadastra aparece na lista do dia correspondente e na cor do calendário.",
   },
   { id: "calendario", selector: "#calendarCard", title: "Calendário", text: "Clique em qualquer dia pra ver os detalhes daquela data. As cores mostram o status de cada dia." },
-  { id: "legenda", selector: ".legend", title: "Legenda", text: "Cada cor tem um significado: erro/falta, ajuste manual, ajuste pendente, feriado, férias, folga ou abono." },
+  { id: "legenda", selector: ".legend", title: "Legenda", text: "Cada cor tem um significado: erro/falta, ajuste manual, ajuste pendente, feriado, férias, folga, abono ou dia com batidas." },
   { id: "dia-painel", selector: "#dayPanelCard", title: "Detalhes do dia", text: "Aqui ficam as batidas do dia selecionado, o total trabalhado, o intervalo e quanto ainda falta." },
   {
     id: "ajuste-batida",
@@ -60,7 +60,26 @@ const TOUR_STEPS = [
     title: "Ajustar uma batida",
     text: "Esqueceu de bater o ponto? Clique na batida vazia (tracejada) pra informar o horário aproximado. Pra corrigir uma batida errada, clique nela pra marcar como pendente de exclusão — depois é só confirmar ou cancelar na lista que aparece logo abaixo.",
   },
+  {
+    id: "conquistas",
+    selector: "#achievementsBtn",
+    title: "Conquistas",
+    text: "O troféu no canto abre as suas conquistas. Elas vão sendo desbloqueadas conforme você usa o painel, e cada uma só revela o nome e o que fez pra ganhar depois de conquistada.",
+    onEnter: () => document.getElementById("fabGroup")?.classList.remove("hidden"),
+    onExit: () => document.getElementById("fabGroup")?.classList.add("hidden"),
+  },
   { id: "flexibilizacao", selector: "#flexCard", title: "Flexibilização do mês", text: "Acompanhe seu saldo de horas e o abono estimado disponível no período (função ainda em construção)." },
+];
+
+// Passo liberado só pelo "knock" secreto (ver sidepanel.js); nunca entra no
+// tour normal nem é marcado como visto.
+const SECRET_STEPS = [
+  {
+    id: "auto-registro",
+    selector: "#punchesGrid",
+    title: "Auto registro",
+    text: "Nas batidas ainda vazias (2ª, 3ª e 4ª) aparece um ✔ cinza no canto. Clique nele (fica vermelho) pra que a extensão bata o ponto sozinha por volta do horário previsto, depois da 1ª batida. Você é avisado 10 e 5 min antes e pode desmarcar a qualquer momento. Precisa do Chrome aberto e do Icarus logado.",
+  },
 ];
 
 const TOUR_STORAGE_KEY = "icarusTourSeenSteps";
@@ -198,6 +217,7 @@ function startTour(steps) {
   els.blocker.classList.remove("hidden");
   els.spotlight.classList.remove("hidden");
   els.bubble.classList.remove("hidden");
+  document.getElementById("fabGroup")?.classList.add("hidden");
   document.getElementById("tourFab")?.classList.add("hidden");
   callStepHook(activeSteps[activeIndex], "onEnter");
   positionTourStep();
@@ -205,12 +225,13 @@ function startTour(steps) {
 
 async function endTour(markSeen) {
   callStepHook(activeSteps[activeIndex], "onExit");
-  if (markSeen) await markStepsSeen(activeSteps.map((s) => s.id));
+  if (markSeen) await markStepsSeen(activeSteps.map((s) => s.id).filter((id) => TOUR_STEPS.some((t) => t.id === id)));
   if (tourEls) {
     tourEls.blocker.classList.add("hidden");
     tourEls.spotlight.classList.add("hidden");
     tourEls.bubble.classList.add("hidden");
   }
+  document.getElementById("fabGroup")?.classList.remove("hidden");
   document.getElementById("tourFab")?.classList.remove("hidden");
 }
 
@@ -229,4 +250,8 @@ document.addEventListener("DOMContentLoaded", () => {
   startAutoTourIfNeeded();
 });
 
-window.IcarusTour = { startFullTour, startAutoTourIfNeeded };
+function startSecretTour() {
+  startTour(SECRET_STEPS);
+}
+
+window.IcarusTour = { startFullTour, startAutoTourIfNeeded, startSecretTour };

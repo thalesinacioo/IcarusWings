@@ -48,7 +48,7 @@ Comandos marcados com ⚠️ dependem de `chrome.*`/`IcarusAPI` de verdade (só 
 | `closePunchTimeModal()` | Fecha o modal de horário sem salvar. |
 | `savePunchTimeModal()` | Salva o que estiver digitado no campo do modal (equivalente a clicar "Salvar"). |
 | `clearPunchTimeInput()` | Limpa o campo de horário do modal (equivalente ao botão "✕" dentro dele). |
-| `openFeriasFolgasModal()` | Abre o modal de "Abono, Folga, Férias" (botão no fim do card de batidas do dia). |
+| `openFeriasFolgasModal()` | Abre o modal de "Abono, Folga, Férias" (botão logo abaixo do "Bater o ponto agora!"). |
 | `closeFeriasFolgasModal()` | Fecha o modal de férias/folgas. |
 | `saveFeriasFolgasModal()` | Salva o período preenchido no modal de férias/folgas. |
 

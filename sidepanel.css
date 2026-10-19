@@ -16,6 +16,7 @@
   --navy: #1e3a8a;
   --black: #111318;
   --yellow: #eab308;
+  --pink: #ec4899;
   --tooltip-bg: #1c2422;
   --tooltip-text: #f5f7f6;
 }
@@ -71,6 +72,11 @@ body {
   justify-content: center;
 }
 .icon-btn:hover { background: var(--border); }
+.topbar-actions .icon-btn { width: 36px; height: 36px; border-radius: 10px; }
+.topbar-actions .icon-btn svg { display: block; }
+#refreshBtn.syncing .refresh-icon { animation: refresh-spin 0.9s linear infinite; }
+@keyframes refresh-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #refreshBtn.syncing .refresh-icon { animation-duration: 2.5s; } }
 
 #refreshBtn .refresh-check { display: none; }
 /* animation (não transition): um "piscar" contínuo com transition e troca
@@ -127,7 +133,7 @@ body {
 }
 #dayPanelCard > * { flex-shrink: 0; }
 #addFeriasFolgasBtn {
-  margin-top: auto;
+  flex-shrink: 0;
   background: color-mix(in srgb, var(--green) 10%, var(--card));
   border-color: color-mix(in srgb, var(--green) 28%, var(--card));
 }
@@ -250,6 +256,8 @@ a.notification-row-text:hover { text-decoration: underline; }
 
 .legend {
   display: flex;
+  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   margin-top: 10px;
   flex-wrap: wrap;
@@ -262,6 +270,8 @@ a.notification-row-text:hover { text-decoration: underline; }
 .legend-swatch.ferias { background: var(--cyan); }
 .legend-swatch.folga { background: var(--navy); }
 .legend-swatch.abono { background: var(--black); }
+.legend-swatch.green { background: var(--green); }
+.legend-swatch.pink { background: var(--pink); }
 
 .punches {
   display: grid;
@@ -400,6 +410,31 @@ a.notification-row-text:hover { text-decoration: underline; }
 
 /* batida ajustada manualmente ou pendente, no resumo de hoje */
 .punch.manual { border-color: var(--purple); }
+.punch .auto-check {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  padding: 1px 2px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+.punch .auto-check { z-index: 3; transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.15s; }
+.punch .auto-check:hover { color: var(--muted); transform: rotate(-12deg) scale(1.9); }
+.punch .auto-check.armed:hover { color: var(--red); }
+.punch .auto-check.armed { color: var(--red); font-weight: 700; }
+.punch.auto-punch { background: color-mix(in srgb, var(--pink) 9%, var(--card)); border-color: color-mix(in srgb, var(--pink) 28%, var(--card)); }
+.punch.manual-punch { background: color-mix(in srgb, var(--green) 9%, var(--card)); border-color: color-mix(in srgb, var(--green) 28%, var(--card)); }
+.punch.dia-ferias { --dia-color: var(--cyan); }
+.punch.dia-folga { --dia-color: var(--navy); }
+.punch.dia-abono { --dia-color: var(--black); }
+@media (prefers-color-scheme: dark) { .punch.dia-abono, .punch.dia-folga { --dia-color: #ffffff; } }
+.punch.dia-ferias, .punch.dia-folga, .punch.dia-abono {
+  background: color-mix(in srgb, var(--dia-color) 10%, var(--card));
+  border-color: color-mix(in srgb, var(--dia-color) 45%, var(--card));
+}
+.punch.dia-ferias .value, .punch.dia-folga .value, .punch.dia-abono .value { color: var(--dia-color); }
 .punch.manual .value::after { content: "*"; color: var(--purple); font-weight: 700; }
 .punch.pending { border-color: var(--orange); border-style: dashed; }
 .punch.pending .value { color: var(--orange); font-weight: 600; }
@@ -536,6 +571,7 @@ a.notification-row-text:hover { text-decoration: underline; }
 .modal {
   position: fixed;
   inset: 0;
+  z-index: 10002;
   background: rgba(0,0,0,0.4);
   display: flex;
   align-items: center;
@@ -582,26 +618,75 @@ a.notification-row-text:hover { text-decoration: underline; }
 
 /* onboarding guiado (tour.js) — reaproveita a paleta e os botões já
    existentes (.primary-btn / .secondary-btn / .link-btn). */
-.tour-fab {
+.fab-group {
   position: fixed;
-  right: 16px;
-  bottom: 16px;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+  right: 8px;
+  bottom: 2px;
+  z-index: 10000;
+}
+.tour-fab {
+  width: 28px;
+  height: 28px;
   border: none;
-  background: var(--brand);
-  color: #fff;
-  font-size: 20px;
+  background: none;
+  padding: 0;
+  font-size: 22px;
   line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-  z-index: 10000;
 }
-.tour-fab:hover { background: var(--brand-dark); }
+.fab-trophy {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 30px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transform: rotate(14deg);
+  transition: transform 0.15s ease;
+}
+.tour-fab { position: relative; z-index: 5; transform-origin: 30% 50%; transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.tour-fab:hover { transform: rotate(-12deg) scale(2); }
+.fab-trophy:hover { transform: rotate(8deg) scale(1.12); }
+
+.badge-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+.badge-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  text-align: center;
+  padding: 10px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.badge-emoji { font-size: 63px; line-height: 1.1; filter: brightness(0); }
+@media (prefers-color-scheme: dark) { .badge-emoji { filter: brightness(0) invert(0.18); } }
+.badge-emoji { display: inline-block; transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.badge-item:hover .badge-emoji { transform: rotate(8deg) scale(1.3); }
+.badge-item.peek .badge-emoji { filter: grayscale(1) opacity(0.45); }
+.badge-item.earned .badge-emoji { filter: none; }
+.badge-item.earned { border-color: var(--green); }
+.badge-item.earned .badge-name { color: var(--text); }
+.badge-date { font-size: 10px; color: var(--green); min-height: 12px; }
+.badge-item:not(.earned) .badge-date { visibility: hidden; }
+.badge-item:not(.earned) .badge-desc { min-height: 12px; }
+#achievementsStatus { min-height: 14px; margin: 0 0 8px; font-size: 11px; color: var(--muted); text-align: center; }
+.badge-name { font-weight: 600; font-size: 12px; color: var(--muted); }
+.badge-desc { font-size: 10.5px; color: var(--muted); }
 
 .tour-blocker {
   position: fixed;
@@ -636,3 +721,11 @@ a.notification-row-text:hover { text-decoration: underline; }
 .tour-bubble-nav .secondary-btn,
 .tour-bubble-nav .primary-btn { width: auto; padding: 7px 12px; font-size: 12px; }
 .tour-skip-btn { padding: 2px 0; }
+
+.update-notes { max-height: 46vh; overflow-y: auto; font-size: 12px; line-height: 1.45; margin-bottom: 8px; }
+.update-notes h4 { margin: 10px 0 4px; font-size: 12px; font-weight: 600; }
+.update-notes ul { margin: 0; padding-left: 16px; }
+.update-notes li { margin-bottom: 4px; }
+.update-notes p { margin: 0 0 6px; }
+.update-how { margin: 0 0 10px; }
+.update-how code { background: var(--bg); padding: 1px 4px; border-radius: 4px; }

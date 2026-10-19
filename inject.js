@@ -391,6 +391,7 @@ window.addEventListener("message", async (event) => {
     else if (action === "addNota") result = await uiAddNota(params);
     else if (action === "baterPonto") result = await uiBaterPonto();
     else if (action === "removerBatida") result = await uiRemoverBatida(params);
+    else if (action === "checkSession") result = { ok: true }; // requirePontoPage acima já valida login/rota
     else throw uiError("UNKNOWN_ACTION", `Ação desconhecida: ${action}`);
 
     window.postMessage(
