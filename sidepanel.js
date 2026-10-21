@@ -613,15 +613,18 @@ async function loadPendingAdjustments() {
 
 function applySecretKnock(on) {
   secretKnock = on;
-  $("#legendPink").classList.toggle("hidden", !on);
+  // o quadradinho rosa é sempre visível (é onde fica o knock); o tooltip só existe depois de descoberto
+  const rosa = $("#legendPink");
+  if (on) rosa.dataset.tooltip = "Batida feita pelo Auto registro";
+  else delete rosa.dataset.tooltip;
   renderDayPanel();
 }
 
-// 5 cliques seguidos (no máximo 1,5s entre um e outro) em "Falta trabalhar".
+// 5 cliques seguidos (no máximo 1,5s entre um e outro) no quadradinho rosa da legenda.
 function setupSecretKnock() {
   let cliques = 0;
   let timer = null;
-  $("#remainingToday").parentElement.addEventListener("click", async () => {
+  $("#legendPink").addEventListener("click", async () => {
     cliques++;
     clearTimeout(timer);
     timer = setTimeout(() => { cliques = 0; }, 1500);
