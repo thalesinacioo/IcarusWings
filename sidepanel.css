@@ -141,7 +141,7 @@ body {
 #feriasFolgasList { margin-bottom: 8px; }
 .card-title { font-weight: 600; margin-bottom: 8px; }
 
-.wip-tag { font-weight: 400; font-size: 10.5px; color: var(--muted); }
+.wip-tag { font-weight: 400; font-size: 10.5px; color: var(--muted); margin-left: 10px; }
 
 .settings-popup {
   position: fixed;
@@ -252,6 +252,18 @@ a.notification-row-text:hover { text-decoration: underline; }
   border-radius: 50%;
   background: var(--orange);
   border: 1.5px solid var(--card);
+}
+.calendar-grid .day.has-auto .chip { position: relative; }
+.calendar-grid .day.has-auto .chip::before {
+  content: "✓";
+  position: absolute;
+  bottom: -6px;
+  right: -6px;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  color: var(--pink);
+  text-shadow: -1px -1px 0 var(--card), 1px -1px 0 var(--card), -1px 1px 0 var(--card), 1px 1px 0 var(--card);
 }
 
 .legend {
@@ -729,3 +741,22 @@ a.notification-row-text:hover { text-decoration: underline; }
 .update-notes p { margin: 0 0 6px; }
 .update-how { margin: 0 0 10px; }
 .update-how code { background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+.badge-section { grid-column: 1 / -1; margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--muted); border-top: 1px solid var(--border); padding-top: 10px; text-align: center; }
+
+.fab-trophy.glow { animation: trophy-glow 1.4s ease-in-out infinite; }
+@keyframes trophy-glow {
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(214, 69, 69, 0.6)); }
+  50% { filter: drop-shadow(0 0 7px rgba(214, 69, 69, 1)) drop-shadow(0 0 14px rgba(214, 69, 69, 0.75)); }
+}
+
+.quick-row { display: flex; gap: 8px; align-items: stretch; flex-shrink: 0; }
+.quick-row #addFeriasFolgasBtn { flex: 1; padding: 6px 4px; font-size: 11px; }
+.quick-row .icon-btn { width: 34px; height: auto; min-height: 30px; flex-shrink: 0; }
+.stats-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 8px 0 12px; }
+.stat-item { background: var(--bg); border-radius: 10px; padding: 10px 8px; text-align: center; }
+.stat-value { display: block; font-size: 22px; font-weight: 700; }
+.stat-label { display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+.stat-wide { grid-column: 1 / -1; }
+.stat-value small { font-size: 11px; font-weight: 400; color: var(--muted); }
+.stat-bar { height: 8px; border-radius: 4px; background: var(--border); margin: 6px 0 4px; overflow: hidden; }
+.stat-bar > div { height: 100%; background: var(--green); border-radius: 4px; }

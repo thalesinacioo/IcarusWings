@@ -109,7 +109,9 @@ const capitalizeFirst = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // ---------- conquistas ----------
 
-// Nome e descrição só aparecem na tela depois que a conquista é ganha.
+// O nome aparece sempre; a descrição só depois que a conquista é ganha.
+// As "especiais" ficam numa seção própria.
+const SPECIAL_ACHIEVEMENTS = ["auto1", "slot", "easter", "ano1", "ferias"];
 const ACHIEVEMENTS = [
   { id: "dias5", emoji: "🏅", name: "Sem choro", desc: "5 dias em sequência sem ajustes" },
   { id: "mes1", emoji: "🎖️", name: "Certinho", desc: "1 mês em sequência sem ajustes" },
@@ -117,17 +119,22 @@ const ACHIEVEMENTS = [
   { id: "meses6", emoji: "🥈", name: "Lenda do ponto", desc: "6 meses em sequência sem ajustes" },
   { id: "ano1", emoji: "🥇", name: "Imortal", desc: "1 ano de trabalho em sequência sem ajustes" },
   { id: "easter", emoji: "🤖", name: "Hacker do ponto", desc: "Você descobriu o auto registro" },
-  { id: "slot", emoji: "🎰", name: "Fuçador", desc: "Você descobriu como espiar uma conquista" },
+  { id: "slot", emoji: "🔍", name: "Fuçador", desc: "Você descobriu como espiar uma conquista" },
   { id: "aj3", emoji: "✏️", name: "Rabisqueiro", desc: "Você tem 3 dias em sequência com ajustes" },
   { id: "aj6", emoji: "💀", name: "RIP ponto", desc: "Você tem mais de 5 dias em sequência com ajustes" },
-  { id: "auto1", emoji: "🦾", name: "Braço biônico", desc: "Você fez seu primeiro auto registro" },
+  { id: "auto1", emoji: "🦾", name: "Biônico", desc: "Você fez seu primeiro auto registro" },
   { id: "auto3", emoji: "🚀", name: "Zero esforço", desc: "Você fez 3 auto registros em sequência" },
   { id: "abono", emoji: "🧾", name: "Abonado", desc: "Você já registrou abono" },
-  { id: "ferias", emoji: "👑", name: "Rei da praia", desc: "Você já registrou férias" },
+  { id: "ferias", emoji: "⛱️", name: "Rei da praia", desc: "Você já registrou férias" },
   { id: "folga", emoji: "⏰", name: "Soneca", desc: "Você já registrou folga" },
 ];
 const ACHIEVEMENT_NAMES = Object.fromEntries(ACHIEVEMENTS.map((a) => [a.id, a.name]));
 let achievementsReady = false;
+let achievementsUnseen = []; // ganhas e ainda não vistas no modal: o troféu brilha
+
+function updateTrophyGlow() {
+  $("#achievementsBtn").classList.toggle("glow", achievementsUnseen.length > 0);
+}
 
 // Metas em dias úteis: 5 dias fixos; "N meses" = soma dos dias úteis dos N
 // períodos de apuração mais recentes (26 a 25), os mesmos da flexibilização.
@@ -224,22 +231,30 @@ function setupBadgePeek() {
 
 function renderAchievements() {
   const grid = $("#badgeGrid");
-  grid.innerHTML = ACHIEVEMENTS.map((a) => {
+  const card = (a) => {
     const dia = achievementsEarned[a.id];
     const espiando = !dia && a.id === badgePeekId;
     return `<div class="badge-item${dia ? " earned" : ""}${espiando ? " peek" : ""}" data-id="${a.id}">
       <span class="badge-emoji">${a.emoji}</span>
-      <span class="badge-name">${dia || espiando ? a.name : "???"}</span>
+      <span class="badge-name">${a.name}</span>
       <span class="badge-desc">${dia || espiando ? a.desc : ""}</span>
       <span class="badge-date">${dia ? fmtDDMMYYYY(dia) : ""}</span>
     </div>`;
-  }).join("");
+  };
+  // conquistadas primeiro (a ordem da lista se mantém dentro de cada grupo)
+  const porGanhas = (a, b) => !!achievementsEarned[b.id] - !!achievementsEarned[a.id];
+  const comuns = ACHIEVEMENTS.filter((a) => !SPECIAL_ACHIEVEMENTS.includes(a.id)).sort(porGanhas);
+  const especiais = ACHIEVEMENTS.filter((a) => SPECIAL_ACHIEVEMENTS.includes(a.id)).sort(porGanhas);
+  grid.innerHTML =
+    comuns.map(card).join("") + '<div class="badge-section">Especiais</div>' + especiais.map(card).join("");
 }
 
 async function saveAchievements(novas) {
   const conquistadas = Object.keys(novas).filter((id) => !achievementsEarned[id]);
   achievementsEarned = novas;
-  await chrome.storage.local.set({ achievementsEarned });
+  if (conquistadas.length) achievementsUnseen = [...new Set([...achievementsUnseen, ...conquistadas])];
+  await chrome.storage.local.set({ achievementsEarned, achievementsUnseen });
+  updateTrophyGlow();
   renderAchievements();
   conquistadas.forEach((id) => showStatus(`Conquista desbloqueada: ${ACHIEVEMENT_NAMES[id]}`, "info", 5000));
 }
@@ -301,6 +316,9 @@ async function syncAchievementHistory() {
 
 function openAchievementsModal() {
   $("#achievementsModal").classList.remove("hidden");
+  achievementsUnseen = [];
+  chrome.storage.local.set({ achievementsUnseen });
+  updateTrophyGlow();
   renderAchievements();
   syncAchievementHistory();
 }
@@ -637,6 +655,7 @@ function updateAutoCheckTooltip(chk) {
 
 async function loadAutoBatidas() {
   autoBatidas = await IcarusAPI.getAutoRegistroBatidas();
+  renderCalendar();
   renderDayPanel();
   refreshAchievements();
 }
@@ -976,6 +995,91 @@ function releaseNotesToHtml(md) {
   return html || "<p>Veja os detalhes na página da release.</p>";
 }
 
+// ---------- estatísticas do período ----------
+
+function computePeriodStats() {
+  const now = new Date();
+  const isMesAtual = currentYear === now.getFullYear() && currentMonth === now.getMonth();
+  const { start, end } = apuracaoPeriodFor(isMesAtual ? now : new Date(currentYear, currentMonth, 1));
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const hojeKey = dateKey(hoje);
+  const ontem = new Date(hoje);
+  ontem.setDate(ontem.getDate() - 1);
+  const s = {
+    start, end, diasComAjuste: 0, aprovados: 0, melhor: 0, atual: 0, folgas: 0, abonos: 0, ferias: 0,
+    faltas: 0, inconsistentes: 0, autos: 0,
+  };
+  let run = 0, somaEntrada = 0, somaSaida = 0, diasEntrada = 0, diasSaida = 0, somaTrabalhado = 0, diasTrabalhados = 0;
+  const minDia = (ms) => { const t = new Date(ms); return t.getHours() * 60 + t.getMinutes(); };
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const key = dateKey(d);
+    const periodo = feriasFolgaParaDia(key);
+    if (periodo?.tipo === "folga") s.folgas++;
+    if (periodo?.tipo === "abono") s.abonos++;
+    if (periodo?.tipo === "ferias") s.ferias++;
+    s.autos += (autoBatidas[key] || []).length;
+    if (key > hojeKey) continue;
+    const ponto = registrosPorDia[key];
+    if (ponto?.temAbonoOuAjusteRegistrado) {
+      s.diasComAjuste++;
+      if ((ponto.statusSolicitacao || "").toLowerCase().includes("aprov")) s.aprovados++;
+    }
+    if (key === hojeKey) continue; // hoje ainda não fechou
+    if (ponto?.falta === "SIM" && isBusinessDay(d) && !periodo) s.faltas++;
+    if (ponto?.consistente === "NAO" && !periodo) s.inconsistentes++;
+    const batidas = ponto ? batidasOrdenadas(ponto) : [];
+    if (batidas.length) {
+      somaEntrada += minDia(batidas[0].horario); diasEntrada++;
+      if (batidas.length % 2 === 0) { somaSaida += minDia(batidas[batidas.length - 1].horario); diasSaida++; }
+      const trab = (ponto.minutoNormalDiurno || 0) + (ponto.minutoNormalNoturno || 0) + (ponto.minutoExtraTP1 || 0) + (ponto.minutoExtraTP2 || 0) + (ponto.minutoExtraTP3 || 0);
+      if (trab > 0) { somaTrabalhado += trab; diasTrabalhados++; }
+    }
+    if (!isBusinessDay(d) || periodo) continue;
+    run = ponto && classifyDay(ponto, false) === "green" ? run + 1 : 0;
+    s.melhor = Math.max(s.melhor, run);
+  }
+  s.atual = run;
+  s.entradaMedia = diasEntrada ? minutesToHHMM(somaEntrada / diasEntrada) : "--:--";
+  s.saidaMedia = diasSaida ? minutesToHHMM(somaSaida / diasSaida) : "--:--";
+  s.horasPorDia = diasTrabalhados ? minutesToHHMM(somaTrabalhado / diasTrabalhados) : "--:--";
+  const fimSaldo = ontem < end ? ontem : end;
+  s.saldo = saldoHorasAteOntem(start, fimSaldo) || "--:--";
+  const m = /^([+-]?)(\d+):(\d{2})/.exec(s.saldo);
+  const saldoMin = m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0;
+  s.tetoMin = jornada6hAtivo ? 0 : countBusinessDays(start, end) * MINUTOS_ABONO_POR_DIA_UTIL;
+  s.abonoUsadoMin = Math.min(Math.max(0, -saldoMin), s.tetoMin);
+  return s;
+}
+
+function openStatsModal() {
+  const s = computePeriodStats();
+  const fmt = (d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  $("#statsPeriod").textContent = `Período ${fmt(s.start)} – ${fmt(s.end)}`;
+  const item = (valor, rotulo) => `<div class="stat-item"><span class="stat-value">${valor}</span><span class="stat-label">${rotulo}</span></div>`;
+  const pct = s.tetoMin ? Math.round((s.abonoUsadoMin / s.tetoMin) * 100) : 0;
+  const barra = `<div class="stat-item stat-wide"><span class="stat-value">${minutesToHHMM(s.abonoUsadoMin)} <small>de ${minutesToHHMM(s.tetoMin)}</small></span>
+    <div class="stat-bar"><div style="width:${pct}%"></div></div><span class="stat-label">abono usado versus teto do mês</span></div>`;
+  $("#statsGrid").innerHTML = [
+    item(s.diasComAjuste, "dias com ajuste"),
+    item(s.aprovados, "ajustes aprovados"),
+    item(s.melhor, "maior sequência de dias sem ajustes"),
+    item(s.atual, "sequência atual sem ajustes"),
+    item(s.folgas, "dias de folga"),
+    item(s.abonos, "dias de abono"),
+    item(s.ferias, "dias de férias"),
+    item(s.faltas, "dias de falta"),
+    item(s.inconsistentes, "dias inconsistentes"),
+    item(s.saldo, "saldo do período (extras menos faltantes)"),
+    item(s.entradaMedia, "entrada média"),
+    item(s.saidaMedia, "saída média"),
+    item(s.horasPorDia, "média de horas por dia"),
+    barra,
+    secretKnock ? item(s.autos, "batidas automáticas") : "",
+  ].join("");
+  $("#statsModal").classList.remove("hidden");
+}
+
 function openUpdateModal(latest, url, release) {
   $("#updateModalTitle").textContent = `Novidades da v${latest}`;
   $("#updateModalNotes").innerHTML = releaseNotesToHtml(release?.body);
@@ -1124,9 +1228,10 @@ function renderCalendar() {
     // importante.
     const cls = classifyDay(ponto, key === todayKey) || (ferias ? ferias.tipo : null) || (holidays.has(key) ? "holiday" : null);
     const hasPending = (pendingAdjustments[key] || []).length > 0;
+    const hasAuto = (autoBatidas[key] || []).length > 0;
     const isSelected = selectedDayKey ? key === selectedDayKey : key === todayKey;
     const cell = document.createElement("div");
-    cell.className = `day${cls ? " " + cls : ""}${key === todayKey ? " today" : ""}${isSelected ? " selected" : ""}${hasPending ? " has-pending" : ""}`;
+    cell.className = `day${cls ? " " + cls : ""}${key === todayKey ? " today" : ""}${isSelected ? " selected" : ""}${hasPending ? " has-pending" : ""}${hasAuto ? " has-auto" : ""}`;
     cell.innerHTML = `<span class="chip">${day}</span>`;
     cell.classList.add("clickable");
     cell.addEventListener("click", () => selectDay(d));
@@ -1750,6 +1855,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("#addFeriasFolgasBtn").addEventListener("click", openFeriasFolgasModal);
   $("#feriasFolgasCancel").addEventListener("click", closeFeriasFolgasModal);
   $("#updateModalLater").addEventListener("click", closeUpdateModal);
+  $("#statsBtn").addEventListener("click", openStatsModal);
+  $("#statsClose").addEventListener("click", () => $("#statsModal").classList.add("hidden"));
+  $("#statsModal").addEventListener("click", (ev) => { if (ev.target === ev.currentTarget) ev.currentTarget.classList.add("hidden"); });
   $("#achievementsBtn").addEventListener("click", openAchievementsModal);
   $("#achievementsClose").addEventListener("click", () => $("#achievementsModal").classList.add("hidden"));
   $("#achievementsModal").addEventListener("click", (ev) => {
@@ -1783,7 +1891,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   loadAutoBatidas();
   setupSecretKnock();
   setupBadgePeek();
-  ({ achievementsEarned = {} } = await chrome.storage.local.get({ achievementsEarned: {} }));
+  ({ achievementsEarned = {}, achievementsUnseen = [] } = await chrome.storage.local.get({ achievementsEarned: {}, achievementsUnseen: [] }));
+  updateTrophyGlow();
   achievementsReady = true;
   renderAchievements();
   refreshAchievements();

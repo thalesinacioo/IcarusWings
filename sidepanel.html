@@ -48,7 +48,12 @@
       <span class="btn-emoji" aria-hidden="true">👍</span>
     </button>
 
-    <button id="addFeriasFolgasBtn" class="secondary-btn" style="width:100%;">Registrar Abono, Folga, Férias</button>
+    <div class="quick-row">
+      <button id="addFeriasFolgasBtn" class="secondary-btn">Registrar Abono, Folga, Férias</button>
+      <button id="statsBtn" class="icon-btn" data-tooltip="Estatísticas do período" aria-label="Estatísticas do período">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+      </button>
+    </div>
 
     <section class="card" id="calendarCard">
       <div class="calendar-header">
@@ -106,7 +111,7 @@
     </section>
 
     <section class="card" id="flexCard">
-      <div class="card-title">Flexibilização do mês <span class="wip-tag">(ainda em construção)</span></div>
+      <div class="card-title">Flexibilização do mês <span class="wip-tag" id="periodoRange">—</span></div>
       <div class="period-summary">
         <div class="period-summary-item" id="saldoHorasBox" tabindex="0">
           <span class="hs-label">Saldo de horas</span>
@@ -118,7 +123,6 @@
         </div>
         <div><span class="hs-label">Teto Abono Mês</span><span id="tetoAbonoMes" class="hs-value">--:--</span></div>
       </div>
-      <p class="hint" id="periodoRange">—</p>
     </section>
 
   </main>
@@ -172,6 +176,17 @@
       <div class="modal-actions">
         <button id="feriasFolgasCancel" class="secondary-btn">Cancelar</button>
         <button id="feriasFolgasSave" class="primary-btn">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="statsModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-title">Estatísticas do período</div>
+      <p class="hint" id="statsPeriod" style="margin-top:0"></p>
+      <div class="stats-grid" id="statsGrid"></div>
+      <div class="modal-actions">
+        <button id="statsClose" class="secondary-btn">Fechar</button>
       </div>
     </div>
   </div>

@@ -68,7 +68,7 @@ const TOUR_STEPS = [
     onEnter: () => document.getElementById("fabGroup")?.classList.remove("hidden"),
     onExit: () => document.getElementById("fabGroup")?.classList.add("hidden"),
   },
-  { id: "flexibilizacao", selector: "#flexCard", title: "Flexibilização do mês", text: "Acompanhe seu saldo de horas e o abono estimado disponível no período (função ainda em construção)." },
+  { id: "flexibilizacao", selector: "#flexCard", title: "Flexibilização do mês", text: "Acompanhe seu saldo de horas e o abono estimado disponível no período." },
 ];
 
 // Passo liberado só pelo "knock" secreto (ver sidepanel.js); nunca entra no
