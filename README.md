@@ -171,6 +171,8 @@ hora, sem avisos repetidos.
 
 ![Mini painel aberto na borda direita da tela](docs/mini-painel.jpg)
 
+![Mini painel em quatro momentos do dia: início, almoço, com ajustes e dia completo](docs/mini-painel-cenarios.jpg)
+
 Uma barra fina pra consultar o ponto de hoje sem abrir o painel lateral,
 em qualquer site.
 
