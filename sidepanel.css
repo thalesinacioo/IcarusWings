@@ -17,6 +17,8 @@
   --black: #111318;
   --yellow: #eab308;
   --pink: #ec4899;
+  --progress-green: color-mix(in srgb, var(--green) 45%, var(--card));
+  --progress-l: 80%;
   --tooltip-bg: #1c2422;
   --tooltip-text: #f5f7f6;
 }
@@ -27,6 +29,7 @@
     --text: #eef2f0;
     --muted: #9aa5a1;
     --border: #2b3234;
+    --progress-l: 30%;
   }
 }
 
@@ -760,3 +763,4 @@ a.notification-row-text:hover { text-decoration: underline; }
 .stat-value small { font-size: 11px; font-weight: 400; color: var(--muted); }
 .stat-bar { height: 8px; border-radius: 4px; background: var(--border); margin: 6px 0 4px; overflow: hidden; }
 .stat-bar > div { height: 100%; background: var(--green); border-radius: 4px; }
+.update-notes .update-img { display: block; max-width: 100%; border-radius: 8px; margin: 6px 0; }

@@ -990,6 +990,11 @@ function releaseNotesToHtml(md) {
       continue;
     }
     if (emLista) { html += "</ul>"; emLista = false; }
+    const img = /^!\[([^\]]*)\]\((https:\/\/[^\s)]+)\)$/.exec(l);
+    if (img) {
+      html += `<img class="update-img" src="${esc(img[2]).replace(/"/g, "&quot;")}" alt="${esc(img[1]).replace(/"/g, "&quot;")}">`;
+      continue;
+    }
     const titulo = /^#{1,6}\s+(.*)/.exec(l);
     if (titulo) html += `<h4>${inline(titulo[1])}</h4>`;
     else if (l) html += `<p>${inline(l)}</p>`;
@@ -1225,11 +1230,12 @@ function renderCalendar() {
     const key = dateKey(d);
     const ponto = registrosPorDia[key];
     const ferias = feriasFolgaParaDia(key);
-    // Prioridade: classificação real do Icarus (roxo/vermelho/verde) primeiro;
-    // depois férias/folga/abono programado (ciano/azul-escuro/preto); feriado
-    // é o "chão", só aparece cinza quando não tem nenhuma classificação mais
-    // importante.
-    const cls = classifyDay(ponto, key === todayKey) || (ferias ? ferias.tipo : null) || (holidays.has(key) ? "holiday" : null);
+    // Prioridade: o que você marcou (folga/abono/férias) ganha de tudo — é a
+    // sua intenção pro dia, mesmo que o Icarus já tenha um ajuste/abono
+    // registrado nele (roxo). Depois a classificação real do Icarus
+    // (roxo/vermelho/verde); feriado é o "chão", só aparece cinza quando não
+    // tem nenhuma classificação mais importante.
+    const cls = (ferias ? ferias.tipo : null) || classifyDay(ponto, key === todayKey) || (holidays.has(key) ? "holiday" : null);
     const hasPending = (pendingAdjustments[key] || []).length > 0;
     const hasAuto = (autoBatidas[key] || []).length > 0;
     const isSelected = selectedDayKey ? key === selectedDayKey : key === todayKey;
@@ -1449,12 +1455,14 @@ function renderDayPanel() {
     if (!ponto && !diaPendingComHorarioSel.length) {
       $("#workedToday").textContent = "--:--";
       $("#remainingToday").textContent = "--:--";
+      paintProgress(null);
     } else {
       let workedLocal = 0;
       for (let i = 0; i + 1 < mergedTimesSel.length; i += 2) workedLocal += (mergedTimesSel[i + 1] - mergedTimesSel[i]) / 60000;
       const metaMin = metaMinutosHoje();
       $("#workedToday").textContent = minutesToHHMM(workedLocal);
       $("#remainingToday").textContent = minutesToHHMM(Math.max(0, metaMin - workedLocal));
+      paintProgress(workedLocal, metaMin);
     }
     $("#intervalToday").textContent = ponto ? minutesToHHMM(intervalMinutesFromTimes(mergedTimesSel)) : "--:--";
   }
@@ -1617,6 +1625,23 @@ async function savePunchTimeModal() {
  * consideram a escala do dia). Se há um número ímpar de batidas, o turno
  * está em aberto — somamos o tempo corrido desde a última batida.
  */
+// Fundo de progresso dos totais: "Trabalhado" enche de verde e "Falta
+// trabalhar" enche passando de vermelho a laranja, amarelo e verde, conforme
+// o trabalhado chega na meta do dia. null = sem dado (fundo normal).
+function paintProgress(workedMin, metaMin) {
+  const wEl = $("#workedToday").parentElement;
+  const rEl = $("#remainingToday").parentElement;
+  if (workedMin == null || !metaMin) {
+    wEl.style.background = "";
+    rEl.style.background = "";
+    return;
+  }
+  const p = Math.min(1, Math.max(0, workedMin / metaMin));
+  const pct = (p * 100).toFixed(1);
+  wEl.style.background = `linear-gradient(to right, var(--progress-green) ${pct}%, var(--bg) ${pct}%)`;
+  rEl.style.background = `linear-gradient(to right, hsl(${Math.round(120 * p)} 75% var(--progress-l)) ${pct}%, var(--bg) ${pct}%)`;
+}
+
 function tickLive() {
   const key = dateKey(new Date());
   const ponto = registrosPorDia[key];
@@ -1644,6 +1669,7 @@ function tickLive() {
     workedEl.textContent = "--:--";
     intervalEl.textContent = "--:--";
     remainingEl.textContent = "--:--";
+    paintProgress(null);
     [punch2, punch3, punch4].forEach((el) => el?.classList.remove("predicted"));
     return;
   }
@@ -1669,8 +1695,12 @@ function tickLive() {
 
   const remainingMin = Math.max(0, metaMin - workedMin);
   workedEl.textContent = minutesToHHMM(workedMin);
-  intervalEl.textContent = minutesToHHMM(intervalMinutesFromTimes(mergedTimes));
+  // fora no almoço (2 batidas): o intervalo conta ao vivo desde a 2ª batida
+  let intervaloMin = intervalMinutesFromTimes(mergedTimes);
+  if (mergedTimes.length === 2) intervaloMin += (Date.now() - mergedTimes[1]) / 60000;
+  intervalEl.textContent = minutesToHHMM(intervaloMin);
   remainingEl.textContent = minutesToHHMM(remainingMin);
+  paintProgress(workedMin, metaMin);
 
   // previsão das batidas restantes — estimativa a partir da 1ª batida real
   // (meta fixa de hoje, 8:00 ou 8:48 com o checkbox, dividida em duas
@@ -1826,6 +1856,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     chk.addEventListener("focus", () => updateAutoCheckTooltip(chk));
   });
 
+  $("#miniPainelCheck").addEventListener("change", (ev) => {
+    chrome.storage.local.set({ miniPainelConfig: ev.target.checked });
+  });
+
   $("#settingsBtn").addEventListener("click", (ev) => {
     ev.stopPropagation();
     toggleSettingsPopup();
@@ -1911,6 +1945,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("#jornada848Check").checked = jornada848Ativo;
   jornada6hAtivo = await IcarusAPI.getJornada6hConfig();
   $("#jornada6hCheck").checked = jornada6hAtivo;
+  ({ miniPainelConfig: $("#miniPainelCheck").checked } = await chrome.storage.local.get({ miniPainelConfig: true }));
   showFlexibilizacaoInstant();
   tickLive();
   // 3) só então dispara a busca real (assíncrona) que atualiza os dias —

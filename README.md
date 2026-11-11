@@ -83,8 +83,10 @@ quarta-feira, 16/09").
   extensão, nunca do total pronto do Icarus (que pode não bater com a meta
   que você está mirando naquele dia — ver "8:48 hoje" abaixo). Quando é
   hoje, é **ao vivo**: se o turno está aberto (número ímpar de batidas),
-  conta o tempo corrido desde a última batida; o intervalo soma só as
-  pausas entre batidas (ex.: o almoço), nunca o trecho ainda em aberto
+  conta o tempo corrido desde a última batida, e depois da 2ª batida o
+  intervalo conta ao vivo enquanto você está fora. Trabalhado e Falta
+  trabalhar enchem o fundo como uma barra de progresso até a meta do dia:
+  Trabalhado em verde, Falta passando de vermelho a laranja, amarelo e verde
 - previsão de horário de saída (em cinza, "~HH:MM") na 4ª batida, enquanto
   ela ainda não aconteceu de verdade — some assim que a batida real (ou
   pendente) ocupar o lugar
@@ -164,6 +166,43 @@ batida ainda não tiver acontecido.
 
 Não existe mais lembrete pra 1ª entrada — ela pode acontecer a qualquer
 hora, sem avisos repetidos.
+
+### Mini painel nas páginas
+
+![Mini painel aberto na borda direita da tela](docs/mini-painel.jpg)
+
+Uma barra fina pra consultar o ponto de hoje sem abrir o painel lateral,
+em qualquer site.
+
+- **Fechado:** uma cápsula branca com uma linha verde, colada na borda
+  direita da tela.
+- **Abrir/fechar:** clique na linha verde. A barra desliza da borda direita
+  e a linha verde estica até a altura dela; clique de novo pra recolher.
+- **O que mostra**, um embaixo do outro: 1ª a 4ª batida, Trabalhado,
+  Intervalo e Falta. Batidas feitas ficam em verde clarinho, ajuste manual
+  em roxo com `*`, ajuste pendente em laranja com `~`, e as batidas que
+  ainda não aconteceram mostram o horário previsto em cinza (`~17:01`).
+  Trabalhado e Falta enchem o fundo conforme o dia avança (Falta vai de
+  vermelho a verde), e o Intervalo conta ao vivo depois da 2ª batida.
+- **Arrastar:** segure a linha verde e arraste pra cima ou pra baixo.
+  Aberta, a barra inteira se move junto.
+- **Igual em todas as abas:** a posição e o aberto/fechado ficam salvos e
+  valem pra todas as abas e sites, inclusive abas novas.
+- É só consulta (não bate ponto) e usa os dados que o painel já carregou do
+  Icarus: abra o painel de vez em quando pra manter os números em dia.
+
+**Como ativar:** vem ligado por padrão.
+
+1. Atualize a extensão (`git pull` ou novo zip) e clique no ⟳ dela em
+   `chrome://extensions`. Se o Chrome pedir a permissão nova de acesso a
+   todos os sites, aceite.
+2. Em `chrome://extensions` → "Detalhes" da extensão → "Acesso ao site",
+   deixe **"Em todos os sites"**.
+3. Recarregue (F5) as abas que já estavam abertas.
+
+Pra esconder, desmarque "Mostrar mini painel nas páginas" na engrenagem (⚙)
+do painel. Páginas internas do Chrome (`chrome://`, Web Store) não permitem
+o mini painel.
 
 ### Exclusão pendente de batida
 
